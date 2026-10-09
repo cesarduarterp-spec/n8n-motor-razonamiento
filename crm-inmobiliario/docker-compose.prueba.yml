@@ -1,0 +1,35 @@
+# Modo prueba de bajo costo: se suma al docker-compose.yml principal.
+#   cp .env.prueba.example .env      # completar 4 valores
+#   docker compose -f docker-compose.yml -f docker-compose.prueba.yml up -d --build
+#
+# Diferencias con producción:
+#   - Postgres oficial de pgvector (sin WAL-G ni archivado de WAL: no hay backups a la nube).
+#   - Límites de memoria pensados para una PC o un servidor gratuito chico (~1,5 GB en total).
+#   - Un solo worker con menos conexiones a la base.
+services:
+  postgres:
+    build: !reset null
+    image: pgvector/pgvector:0.8.0-pg17
+    command: ["postgres", "-c", "shared_buffers=128MB", "-c", "max_connections=50"]
+    env_file: !reset []
+    mem_limit: 512m
+
+  redis:
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD}", "--maxmemory", "128mb"]
+    mem_limit: 160m
+
+  api:
+    mem_limit: 384m
+
+  worker:
+    mem_limit: 384m
+
+  # Túnel HTTPS gratuito (Cloudflare Quick Tunnel, sin cuenta) para que Meta/WhatsApp
+  # puedan llamar a los webhooks de tu PC. La URL pública aparece en:
+  #   docker compose -f docker-compose.yml -f docker-compose.prueba.yml logs tunnel | grep trycloudflare
+  tunnel:
+    image: cloudflare/cloudflared:latest  # fijar una versión concreta si se usa más allá de la prueba
+    command: ["tunnel", "--no-autoupdate", "--url", "http://api:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+    profiles: ["tunnel"]

@@ -138,8 +138,8 @@ export const users = pgTable(
     passwordHash: text('password_hash').notNull(),
     role: userRole('role').notNull(),
     active: boolean('active').notNull().default(true),
-    // Google Calendar del asesor (refresh token en tenant_secrets: google_refresh_token:<userId>).
-    calendarId: text('calendar_id'),
+    // Link iCal privado del asesor: se guarda solo el hash SHA-256 del token (regenerable = revocable).
+    icalFeedTokenHash: text('ical_feed_token_hash').unique(),
     // Zonas / tipos que atiende (para reglas de asignación).
     zones: text('zones').array().notNull().default(sql`'{}'::text[]`),
     ...timestamps,
@@ -773,6 +773,23 @@ export const visits = pgTable(
     ...timestamps,
   },
   (t) => [index('visits_user_idx').on(t.userId, t.startsAt)],
+);
+
+/** Bloqueos de agenda del asesor (vacaciones, trámites, "no disponible"): el bot no ofrece esos horarios. */
+export const availabilityBlocks = pgTable(
+  'availability_blocks',
+  {
+    id: id(),
+    tenantId: tenantId(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    reason: text('reason'),
+    ...timestamps,
+  },
+  (t) => [index('availability_blocks_user_idx').on(t.userId, t.startsAt)],
 );
 
 // ───────────────────────────── Auditoría y trazabilidad (append-only) ─────────────────────────────

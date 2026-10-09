@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
-import { Injectable } from '@nestjs/common';
+import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { env } from '../../config/env.js';
 import { type AiTrace, LlmClients } from './llm-clients.js';
 import { type Intent, SpecialistDecision } from './agent.schemas.js';
@@ -42,7 +42,13 @@ export interface SpecialistInput {
 export class ClaudeSpecialist {
   constructor(private readonly llm: LlmClients) {}
 
+  get enabled(): boolean {
+    return env().CLAUDE_ENABLED;
+  }
+
   async decide(input: SpecialistInput): Promise<SpecialistDecision> {
+    // Claude apagado (modo prueba): el caso sensible va directo a una persona, sin costo de API.
+    if (!this.enabled) return { ...HANDOFF, internalNote: 'Claude desactivado (CLAUDE_ENABLED=false): requiere atención humana.' };
     const userContent = `Intención detectada por el frontline: ${input.intent}
 
 <perfil_contacto>
@@ -70,6 +76,7 @@ ${input.latestMessage}
 
   /** Aviso formal de mora para un contrato (lo dispara back-office o el cron de mora). */
   async draftLateNotice(tenantId: string, contractContext: string, today: string): Promise<SpecialistDecision> {
+    if (!this.enabled) throw new ServiceUnavailableException('Redacción con Claude desactivada en este entorno (CLAUDE_ENABLED=false)');
     return this.run(
       tenantId,
       'late_payment_notice',

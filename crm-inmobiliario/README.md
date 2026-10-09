@@ -79,7 +79,7 @@ flowchart LR
 
 ## 2. Modelo de datos
 
-Esquema completo en [`src/database/schema.ts`](src/database/schema.ts). Migraciones en [`drizzle/`](drizzle/): `0000` tablas base, `0001` RLS, `0002` tablas Tokko/auditoría, **`0003` triggers zero-trust** (auditoría encadenada, soft delete, versionado, capa privada, pipeline por defecto, anti doble reserva), `0004` limpieza del modelo anterior y `0005` retención del log de IA.
+Esquema completo en [`src/database/schema.ts`](src/database/schema.ts). Migraciones en [`drizzle/`](drizzle/): `0000` tablas base, `0001` RLS, `0002` tablas Tokko/auditoría, **`0003` triggers zero-trust** (auditoría encadenada, soft delete, versionado, capa privada, pipeline por defecto, anti doble reserva), `0004` limpieza del modelo anterior, `0005` retención del log de IA y `0006`–`0008` agenda propia (bloqueos y link iCal; se elimina Google Calendar).
 
 | Dominio | Tablas |
 |---|---|
@@ -141,7 +141,7 @@ flowchart LR
 - **Kanban configurable** (`/pipeline`): 8 etapas sembradas por trigger al crear el tenant (Nuevo lead → Calificado → Visita coordinada → Tasación → Negociación → Reserva → Cierre / Perdido), SLA por etapa, reordenables. `PATCH /leads/:id/stage` con `expectedVersion` → 409 ante cambios concurrentes. Los agentes solo pueden **avanzar** etapas, nunca retroceder ni reabrir un cierre.
 - **Round-robin equitativo**: reglas por prioridad (zona, tipo, operación, canal; ignoran tildes/mayúsculas) o pool general; elige al asesor con menos leads abiertos y, a igualdad, al que hace más que no recibe. Advisory lock por tenant para que el reparto sea justo bajo concurrencia.
 - **Smart matching**: `lead_requirements` (filtros + lenguaje natural) vectorizado con Gemini embeddings (`RETRIEVAL_QUERY` vs `RETRIEVAL_DOCUMENT`), cruzado en pgvector y puntuado `0,6 × semántico + 0,4 × ajuste estructurado` con motivos legibles. Funciona en los dos sentidos: lead → propiedades y propiedad nueva → leads interesados (job automático al dar de alta un inmueble). El orquestador actualiza los requerimientos en cada conversación comercial.
-- **Booker agéntico**: el bot ofrece horarios con `get_visit_slots` y reserva con `book_visit`. La disponibilidad combina Google Calendar del asesor (OAuth por asesor: `/integrations/google/connect`) y visitas ya agendadas; reserva atómica con restricción `EXCLUDE USING gist` que impide dos visitas superpuestas del mismo asesor; si Google falla, la visita se cancela. Sin Google conectado funciona con la agenda interna.
+- **Booker agéntico con agenda propia (sin Google OAuth, $0)**: el bot ofrece horarios con `get_visit_slots` y reserva con `book_visit`; las fechas las calcula el sistema y la IA solo elige entre opciones válidas. La disponibilidad combina visitas agendadas, **bloqueos** del asesor (`/agenda/blocks`) y, opcionalmente, la *dirección secreta iCal* de su calendario personal (solo lectura, cifrada, cache 5 min, expande eventos repetitivos). Reserva atómica con `EXCLUDE USING gist` (sin visitas superpuestas). Cada asesor se suscribe desde el celular a su **link iCal privado** (`/agenda/feed-link`, revocable; se guarda solo el hash) y puede bajar el `.ics` de cada visita.
 
 ---
 
@@ -160,7 +160,7 @@ flowchart LR
 | Fichas | `src/modules/fichas/public-listing.ts`, `render.ts`, `fichas.service.ts` |
 | Pipeline y asignación | `src/modules/pipeline/assignment.ts`, `pipeline.service.ts` |
 | Smart matching | `src/modules/matching/scoring.ts`, `matching.service.ts` |
-| Booker | `src/modules/booking/slots.ts`, `google-calendar.client.ts`, `booking.service.ts` |
+| Booker y agenda | `src/modules/booking/slots.ts`, `ical.ts`, `agenda.service.ts`, `booking.service.ts` |
 | Backups | `docker/postgres/Dockerfile`, `docker/postgres/backup/*` |
 
 ### Fórmulas
@@ -190,12 +190,16 @@ flowchart LR
 | GET | `/public/fichas/:token?format=html\|pdf\|json` | público (link firmado) |
 | GET / POST / PATCH | `/pipeline` · `/pipeline/stages` · `/pipeline/stages/order` · `/leads` · `/leads/:id/stage` · `/leads/:id/assign` · `/leads/:id/assignee` · `/assignment-rules` | según acción |
 | PATCH / POST / GET | `/leads/:id/requirements` · `/leads/:id/matches` · `/matches/:id` · `/properties/:id/matching-leads` | autenticado |
-| GET / POST | `/visits/slots` · `/visits` · `/visits/:id/cancel` · `/integrations/google/connect` · `/integrations/google/callback` | asesores |
+| GET / POST | `/visits/slots` · `/visits` · `/visits/:id/cancel` · `/visits/:id/ics` | asesores |
+| POST / DELETE / PUT / GET | `/agenda/feed-link` · `/agenda/external-calendar` · `/agenda/blocks` | cada asesor (admin/broker: cualquiera) |
+| GET | `/public/calendars/:token.ics` | público (token secreto) |
 | GET / POST | `/audit/entities/:entity/:id` · `/audit/logs` · `/audit/verify` · `/audit/ai/conversations/:id` · `/audit/trash/:entity` · `/audit/trash/:entity/:id/restore` | admin |
 
 ---
 
 ## 6. Ejecución
+
+> **¿Primera vez o prueba de bajo costo?** Seguí [PRUEBA.md](PRUEBA.md): Docker local o servidor gratuito, Gemini en plan gratuito, Claude apagado y sin backups a la nube.
 
 ```bash
 cp .env.example .env            # completar secretos
@@ -231,9 +235,10 @@ Ver [`.env.example`](.env.example). Se validan al arrancar ([`src/config/env.ts`
 
 ## 7. Estado de la verificación
 
-- `tsc` sin errores; **46 tests**: unitarios (motor ICL/IPC, punitorios, liquidación, firmas, normalizadores, router, round-robin, scoring, turnos, ficha neutra, escape HTML) e integración contra **Postgres 16 + pgvector real** (RLS entre tenants; auditoría con actor/IP/UA y snapshots; soft delete y restore; versionado; inmutabilidad para app, sistema y dueño; detección de manipulación de la cadena de hashes; capa privada invisible para agentes IA y asesores; `AI_INTERACTION`; pipeline por defecto, avance solo hacia adelante y reparto 2/1; `PAYMENT_EXEC`; rechazo de visitas superpuestas).
+- `tsc` sin errores; **48 tests** (incluye generación/lectura iCal con eventos repetitivos): unitarios (motor ICL/IPC, punitorios, liquidación, firmas, normalizadores, router, round-robin, scoring, turnos, ficha neutra, escape HTML) e integración contra **Postgres 16 + pgvector real** (RLS entre tenants; auditoría con actor/IP/UA y snapshots; soft delete y restore; versionado; inmutabilidad para app, sistema y dueño; detección de manipulación de la cadena de hashes; capa privada invisible para agentes IA y asesores; `AI_INTERACTION`; pipeline por defecto, avance solo hacia adelante y reparto 2/1; `PAYMENT_EXEC`; rechazo de visitas superpuestas).
 - Migraciones `0000`→`0005` aplicadas desde cero y también sobre una base con datos (backfill de etapas y de `agent_runs`).
 - Smoke test con API + worker reales: lead manual con asignación round-robin, Kanban (asesora ve solo lo suyo), 409 por versión vieja, fichas pública/neutra en HTML y PDF, link firmado y token adulterado (404), capa privada (403 para asesora + `PRIVATE_ACCESS`), `EXPORT` en el trail, `audit/verify` íntegro y reserva de visita sin Google (segunda reserva del mismo horario → 409, lead pasa a "Visita coordinada").
 - Scripts de backup probados con un `wal-g` simulado (rechazan subir sin cifrado; en producción retienen el WAL si el destino no está configurado).
-- **No verificado en vivo**: Claude/Gemini (sin API keys reales; las llamadas llegan a la API y fallan por la key), Google Calendar OAuth, BCRA/INDEC (hosts bloqueados en el sandbox), el `docker build` (sin daemon; `docker compose config` valida) y la descarga de WAL-G: **verificar `WALG_VERSION`/`WALG_ASSET`** contra los releases oficiales antes de construir la imagen de Postgres.
+- Agenda propia probada con la API real: un bloqueo saca esos horarios de las opciones, la reserva aparece en el link iCal del asesor, regenerar el link anula el anterior y se rechazan URLs externas no https/internas.
+- **No verificado en vivo**: Claude/Gemini (sin API keys reales; las llamadas llegan a la API y fallan por la key), la lectura de un calendario iCal real de Google/Apple (sin salida a internet en el sandbox; cubierta con tests del parser), la suscripción desde Google Calendar, BCRA/INDEC (hosts bloqueados en el sandbox), el `docker build` (sin daemon; `docker compose config` valida) y la descarga de WAL-G: **verificar `WALG_VERSION`/`WALG_ASSET`** contra los releases oficiales antes de construir la imagen de Postgres.
 - Pendientes razonables: coeficiente **Casa Propia**, respuesta automática a comentarios de TikTok/YouTube (requiere OAuth del creador), plantillas de WhatsApp desde la UI, rotación de `MASTER_ENCRYPTION_KEY`, y exportación periódica de `audit_logs` a almacenamiento WORM independiente.

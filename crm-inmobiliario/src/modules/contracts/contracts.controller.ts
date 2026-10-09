@@ -7,6 +7,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  ServiceUnavailableException,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -16,6 +17,7 @@ import { and, eq } from 'drizzle-orm';
 import { type AuthUser, CurrentUser, Roles } from '../../common/auth/auth.js';
 import { type ContractExtractionJob, defaultJobOptions, Q } from '../../common/queue/queues.js';
 import { StorageService } from '../../common/storage.js';
+import { env } from '../../config/env.js';
 import { DatabaseService } from '../../database/database.service.js';
 import { contractDocuments, contracts, paymentSchedules } from '../../database/schema.js';
 
@@ -39,6 +41,9 @@ export class ContractsController {
   @Roles('admin', 'broker', 'back_office')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 30 * 1024 * 1024 } }))
   async upload(@CurrentUser() user: AuthUser, @UploadedFile() file?: { buffer: Buffer; mimetype: string }) {
+    if (!env().CLAUDE_ENABLED) {
+      throw new ServiceUnavailableException('Lectura automática de contratos desactivada en este entorno (CLAUDE_ENABLED=false)');
+    }
     if (!file) throw new BadRequestException('Falta el archivo (campo "file")');
     const ext = ALLOWED.get(file.mimetype);
     if (!ext) throw new BadRequestException(`Tipo no soportado: ${file.mimetype}`);

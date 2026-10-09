@@ -1,9 +1,9 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, eq, gte, lt } from 'drizzle-orm';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { and, eq } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service.js';
 import { leads, properties, tenants, users, visits } from '../../database/schema.js';
 import { PipelineService } from '../pipeline/pipeline.service.js';
-import { GoogleCalendarClient } from './google-calendar.client.js';
+import { AgendaService } from './agenda.service.js';
 import { DEFAULT_SLOT_CONFIG, formatSlot, freeSlots, type Interval, type SlotConfig, spreadPick } from './slots.js';
 
 const HORIZON_DAYS = 7;
@@ -14,18 +14,18 @@ export interface SlotOption {
 }
 
 /**
- * Booker agéntico: calcula disponibilidad real del asesor (Google Calendar
- * + visitas ya agendadas) y reserva de forma atómica. La restricción EXCLUDE
+ * Booker agéntico: calcula disponibilidad real del asesor (agenda propia del
+ * CRM: visitas + bloqueos + calendario personal vía iCal) y reserva de forma
+ * atómica, sin depender de Google OAuth. La restricción EXCLUDE
  * de `visits` es la última línea de defensa contra la doble reserva cuando
  * dos conversaciones eligen el mismo turno a la vez.
  */
 @Injectable()
 export class BookingService {
-  private readonly log = new Logger(BookingService.name);
 
   constructor(
     private readonly db: DatabaseService,
-    private readonly calendar: GoogleCalendarClient,
+    private readonly agenda: AgendaService,
     private readonly pipeline: PipelineService,
   ) {}
 
@@ -57,16 +57,8 @@ export class BookingService {
     });
   }
 
-  private async busy(tenantId: string, advisor: typeof users.$inferSelect, from: Date, to: Date): Promise<Interval[]> {
-    const dbBusy = await this.db.withTenant(tenantId, (tx) =>
-      tx
-        .select({ start: visits.startsAt, end: visits.endsAt })
-        .from(visits)
-        .where(and(eq(visits.userId, advisor.id), eq(visits.status, 'scheduled'), lt(visits.startsAt, to), gte(visits.endsAt, from))),
-    );
-    if (!(await this.calendar.hasCalendar(tenantId, advisor.id))) return dbBusy;
-    const calBusy = await this.calendar.busy(tenantId, advisor.id, advisor.calendarId ?? 'primary', from, to);
-    return [...dbBusy, ...calBusy];
+  private busy(tenantId: string, advisor: typeof users.$inferSelect, from: Date, to: Date): Promise<Interval[]> {
+    return this.agenda.busy(tenantId, advisor.id, from, to);
   }
 
   /** Hasta 6 opciones de horario repartidas en la próxima semana. */
@@ -88,9 +80,8 @@ export class BookingService {
 
   /**
    * Reserva: (1) re-verifica que el turno siga libre, (2) inserta la visita
-   * (EXCLUDE impide solapamientos), (3) crea el evento en el calendario del
-   * asesor; si Google falla, la visita se cancela para no dejar un turno
-   * fantasma, (4) avanza el lead a "Visita coordinada".
+   * (EXCLUDE impide solapamientos) y (3) avanza el lead a "Visita coordinada".
+   * El asesor la ve en su celular a través de su link iCal (se actualiza solo).
    */
   async book(
     tenantId: string,
@@ -128,24 +119,6 @@ export class BookingService {
         throw err;
       });
 
-    if (await this.calendar.hasCalendar(tenantId, advisor.id)) {
-      try {
-        const eventId = await this.calendar.createEvent(tenantId, advisor.id, advisor.calendarId ?? 'primary', {
-          summary: `Visita ${property.code} – ${property.title}`,
-          description: `Visita agendada por ${bookedBy}. Lead ${leadId}.`,
-          location: property.address ?? property.neighborhood ?? undefined,
-          start,
-          end,
-          visitId: visit.id,
-        });
-        await this.db.withTenant(tenantId, (tx) => tx.update(visits).set({ calendarEventId: eventId }).where(eq(visits.id, visit.id)));
-      } catch (err) {
-        this.log.error(`No se pudo crear el evento de calendario: ${String(err)}`);
-        await this.db.withTenant(tenantId, (tx) => tx.update(visits).set({ status: 'cancelled', notes: 'Falló la creación del evento en Google Calendar' }).where(eq(visits.id, visit.id)));
-        throw new ConflictException('No se pudo confirmar el turno en la agenda del asesor');
-      }
-    }
-
     return {
       visitId: visit.id,
       when: formatSlot(start, config.utcOffset),
@@ -154,6 +127,7 @@ export class BookingService {
     };
   }
 
+  /** La cancelación aparece en el calendario del asesor como evento cancelado en la próxima actualización del feed. */
   async cancel(tenantId: string, visitId: string, reason: string) {
     const visit = await this.db.withTenant(tenantId, async (tx) => {
       const [row] = await tx
@@ -164,12 +138,6 @@ export class BookingService {
       return row;
     });
     if (!visit) throw new NotFoundException('Visita inexistente o no vigente');
-    if (visit.calendarEventId) {
-      const [advisor] = await this.db.withTenant(tenantId, (tx) => tx.select().from(users).where(eq(users.id, visit.userId)));
-      await this.calendar
-        .deleteEvent(tenantId, visit.userId, advisor?.calendarId ?? 'primary', visit.calendarEventId)
-        .catch((err: unknown) => this.log.warn(`No se pudo borrar el evento ${visit.calendarEventId}: ${String(err)}`));
-    }
     return { visitId, status: 'cancelled' };
   }
 }

@@ -1,0 +1,124 @@
+# Guía del modo prueba (costo mínimo)
+
+Esta guía levanta el CRM completo en **tu Docker local** (o en un servidor gratuito) gastando lo mínimo posible.
+
+| Pieza | En la prueba | Costo |
+|---|---|---|
+| Servidor | Tu PC con Docker, o Oracle Cloud *Always Free* | $0 |
+| Base de datos y colas | Postgres + Redis dentro de Docker | $0 |
+| IA de atención (Gemini) | API key gratuita de Google AI Studio (cupo diario) | $0 |
+| IA legal (Claude) | **Apagada** (`CLAUDE_ENABLED=false`): reclamos y mora se derivan a una persona | $0 |
+| Agenda | Agenda propia del CRM + link iCal (sin Google OAuth) | $0 |
+| WhatsApp | Número de prueba gratuito de Meta | $0 |
+| Webhooks desde internet | Túnel de Cloudflare sin cuenta | $0 |
+| Backups a la nube | Desactivados (los datos quedan en tu Docker) | $0 |
+
+> ⚠️ **Datos de prueba, no de clientes reales.** En el plan gratuito de Gemini, Google puede usar el contenido de las consultas para mejorar sus productos. Para datos reales hay que pasar a un plan pago.
+
+> El proyecto es el **backend (API)**: todavía no tiene pantallas. Se prueba con `curl`, Postman o Insomnia, y con WhatsApp.
+
+---
+
+## 1. Requisitos
+
+- Docker Desktop (Windows/Mac) o Docker Engine (Linux), con unos **2 GB de RAM libres**.
+- `openssl` para generar claves y `jq` para los ejemplos con `curl` (en Windows, usar Git Bash o WSL).
+
+## 2. Configurar
+
+```bash
+cd crm-inmobiliario
+cp .env.prueba.example .env
+openssl rand -base64 48   # pegar en JWT_SECRET
+openssl rand -base64 32   # pegar en MASTER_ENCRYPTION_KEY
+```
+
+Crear la API key de Gemini en <https://aistudio.google.com> → *Get API key* y pegarla en `GEMINI_API_KEY`.
+
+## 3. Levantar
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prueba.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.prueba.yml ps        # todo "running"/"healthy"
+curl http://localhost:3000/health                                           # {"status":"ok"}
+```
+
+Crear la inmobiliaria y el usuario administrador:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prueba.yml run --rm \
+  -e SEED_SLUG=demo -e SEED_ADMIN_EMAIL=admin@demo.com -e SEED_ADMIN_PASSWORD='UnaClaveLarga123' \
+  api node dist/database/seed.js
+```
+
+Para no repetir el `-f … -f …`, se puede crear un alias: `alias dc='docker compose -f docker-compose.yml -f docker-compose.prueba.yml'`.
+
+## 4. Probar la API
+
+```bash
+# Login
+TOKEN=$(curl -s -X POST localhost:3000/auth/login -H 'content-type: application/json' \
+  -d '{"tenant":"demo","email":"admin@demo.com","password":"UnaClaveLarga123"}' | jq -r .accessToken)
+
+# Cargar una propiedad (Gemini genera su "huella semántica" para la búsqueda inteligente)
+curl -s -X POST localhost:3000/properties -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
+  "code":"PAL-101","title":"2 ambientes luminoso con balcón","operation":"rent","propertyType":"departamento",
+  "neighborhood":"Palermo","city":"CABA","price":550000,"bedrooms":1,"coveredM2":45,
+  "description":"Al frente, a 3 cuadras del subte D, apto mascotas"}'
+
+# Búsqueda en lenguaje natural
+curl -s "localhost:3000/properties/search?q=depto%20chico%20cerca%20del%20subte%20que%20acepte%20perro" -H "authorization: Bearer $TOKEN"
+
+# Lead manual con requerimientos → asignación automática + matching
+curl -s -X POST localhost:3000/leads -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
+  "fullName":"Carla","phoneE164":"+5491155550000",
+  "requirements":{"operation":"rent","neighborhoods":["Palermo"],"maxPrice":600000,"naturalLanguage":"tengo un perro, quiero balcón"}}'
+
+curl -s localhost:3000/pipeline -H "authorization: Bearer $TOKEN"            # tablero Kanban
+curl -s -X POST localhost:3000/audit/verify -H "authorization: Bearer $TOKEN"  # integridad del audit trail
+```
+
+Fichas: `GET /properties/<id>/ficha?variant=public&format=pdf` (o `variant=neutral`). El listado completo de endpoints está en el [README](README.md#endpoints).
+
+## 5. Agenda de visitas (sin Google)
+
+El bot ofrece horarios libres y reserva solo; la agenda vive en el CRM.
+
+- **Bloquear horarios** (vacaciones, trámites):
+  `POST /agenda/blocks` con `{"startsAt":"2026-10-20T09:00:00-03:00","endsAt":"2026-10-20T13:00:00-03:00","reason":"Trámite"}`
+- **Ver las visitas en el celular**: `POST /agenda/feed-link` devuelve un link `.ics` privado. En Google Calendar (desde la web): *Otros calendarios → + → Desde URL* y pegarlo. En iPhone: *Ajustes → Calendario → Cuentas → Añadir calendario suscrito*.
+  - El link tiene que ser **público** (con el túnel o en un servidor); `localhost` no le sirve a Google.
+  - Google actualiza los calendarios suscritos cada varias horas (Apple y Outlook, más seguido). La reserva en el CRM es inmediata; lo que demora es verlo en el celular.
+  - Si se comparte por error: `POST /agenda/feed-link` de nuevo genera otro y anula el anterior.
+- **Opcional, que el bot respete tu agenda personal**: en Google Calendar → *Configuración* → tu calendario → *Dirección secreta en formato iCal* → copiarla y enviarla con `PUT /agenda/external-calendar {"url":"https://calendar.google.com/…/basic.ics"}`. El CRM la lee cada 5 minutos (solo lectura; se guarda cifrada).
+
+## 6. WhatsApp de prueba (opcional, gratis)
+
+1. Levantar el túnel: `docker compose -f docker-compose.yml -f docker-compose.prueba.yml --profile tunnel up -d` y copiar la URL `https://….trycloudflare.com` de `… logs tunnel`. Ponerla en `PUBLIC_BASE_URL` y reiniciar (`… up -d`).
+2. En <https://developers.facebook.com> crear una app de tipo *Business* → agregar **WhatsApp**. Meta da un **número de prueba gratuito** que puede escribir hasta a 5 números verificados (el tuyo, por ejemplo).
+3. *WhatsApp → Configuración → Webhook*: URL `https://….trycloudflare.com/webhooks/meta`, token de verificación = `META_VERIFY_TOKEN`; suscribir el campo `messages`. Copiar el *App Secret* (Configuración básica) en `META_APP_SECRET`.
+4. Vincular el número a tu inmobiliaria (ID del número y token de acceso, en *API Setup*):
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prueba.yml run --rm \
+     -e SEED_SLUG=demo -e SEED_WA_PHONE_NUMBER_ID=<id del número> -e SEED_WA_TOKEN=<token> \
+     api node dist/database/seed.js
+   ```
+5. Escribirle al número de prueba desde tu WhatsApp: "Hola, busco un 2 ambientes en Palermo".
+
+Limitaciones del modo gratuito: la URL del túnel rápido **cambia cada vez que se reinicia** (hay que actualizarla en Meta) y el token temporal de Meta vence a las 24 h (para algo más estable: token de *usuario del sistema* en Meta Business).
+
+## 7. Servidor gratuito (si no querés dejar la PC prendida)
+
+- **Oracle Cloud – Always Free**: una VM ARM de hasta 4 núcleos y 24 GB de RAM sin costo, suficiente para todo este stack. Pide tarjeta para verificar identidad (no cobra mientras se use solo lo gratuito). Instalar Docker y seguir esta misma guía; abrir el puerto 443 o usar el túnel.
+- Render, Railway o Fly.io tienen planes gratuitos o de prueba, pero con suspensión por inactividad o sin Redis/Postgres persistentes: sirven para una demo puntual, no para dejar el bot atendiendo.
+
+## 8. Apagar / borrar
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prueba.yml down       # apaga y conserva los datos
+docker compose -f docker-compose.yml -f docker-compose.prueba.yml down -v    # apaga y BORRA todo
+```
+
+## 9. Pasar de prueba a producción
+
+`cp .env.example .env` (y completar), activar Claude (`CLAUDE_ENABLED=true` + `ANTHROPIC_API_KEY`), configurar backups (`backup.env`, ver README) y levantar **sin** `docker-compose.prueba.yml`.

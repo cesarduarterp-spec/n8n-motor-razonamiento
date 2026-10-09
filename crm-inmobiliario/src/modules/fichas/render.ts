@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import { isPublicHttpsUrl } from '../../common/net/fetchable.js';
 import type { PublicListing } from './public-listing.js';
 
 const esc = (s: unknown) =>
@@ -54,23 +55,8 @@ export function renderHtml(l: PublicListing): string {
 </body></html>`;
 }
 
-/** Anti-SSRF básico: solo https a hostnames públicos (sin IPs literales ni nombres internos). */
-function isFetchable(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return (
-      u.protocol === 'https:' &&
-      !/^(localhost|.*\.local|.*\.internal)$/i.test(u.hostname) &&
-      !/^[\d.]+$|^\[|:/.test(u.hostname) &&
-      u.hostname.includes('.')
-    );
-  } catch {
-    return false;
-  }
-}
-
 async function fetchImage(url: string): Promise<Buffer | undefined> {
-  if (!isFetchable(url)) return undefined;
+  if (!isPublicHttpsUrl(url)) return undefined;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(5_000), redirect: 'error' });
     const type = res.headers.get('content-type') ?? '';

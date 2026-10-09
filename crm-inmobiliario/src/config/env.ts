@@ -25,6 +25,12 @@ const EnvSchema = z.object({
   // LLMs globales (un tenant puede sobreescribirlos con sus propias keys).
   ANTHROPIC_API_KEY: z.string().optional(),
   CLAUDE_MODEL: z.string().default('claude-opus-5-5'),
+  // Modo prueba / ahorro: false apaga Claude. Los reclamos se derivan a una persona sin llamar a la API
+  // y la lectura automática de contratos queda deshabilitada.
+  CLAUDE_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   GEMINI_EMBEDDING_MODEL: z.string().default('gemini-embedding-001'),
@@ -37,10 +43,6 @@ const EnvSchema = z.object({
 
   TIKTOK_CLIENT_SECRET: z.string().optional(),
   YOUTUBE_API_KEY: z.string().optional(),
-
-  // Google Calendar (booker de visitas): OAuth por asesor.
-  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
-  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
 
   // Fuentes de índices.
   BCRA_API_BASE: z.string().url().default('https://api.bcra.gob.ar/estadisticas/v3.0/monetarias'),
