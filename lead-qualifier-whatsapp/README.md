@@ -8,7 +8,7 @@ Versión del agente de calificación de leads (`checkpoint1_cesar_duarte`) conec
 | # | Problema | Impacto | Corrección |
 |---|---|---|---|
 | 1 | **El chat responde con la salida de Slack, no con la del agente** (`responseMode: lastNode` y Slack es el último nodo) | El prospecto no ve la respuesta del agente | La respuesta se envía explícitamente por WhatsApp y Slack queda solo como registro |
-| 2 | **Sin memoria**: cada mensaje se procesa como si fuera el primero | La regla "pide una aclaración" no funciona: al responder, el agente ya olvidó la conversación | Memoria por contacto (clave = teléfono de WhatsApp) |
+| 2 | **Sin memoria**: cada mensaje se procesa como si fuera el primero | La regla "pide una aclaración" no funciona: al responder, el agente ya olvidó la conversación | Memoria permanente en Postgres por contacto (clave = teléfono de WhatsApp) |
 | 3 | **Se muestran datos internos al cliente**: el bloque `[SCORE] [CLASIFICACION] [ACCION_TOMADA]` y `ESCALAR_A_HUMANO` salen en la respuesta | En WhatsApp el prospecto vería su puntaje | El agente separa la respuesta pública de un JSON interno; un nodo los divide y limpia lo que se filtre |
 | 4 | **Score BANT sin rúbrica** ("calcula de 0 a 100") | Puntajes inconsistentes entre conversaciones | Rúbrica explícita: Necesidad 30, Plazo 25, Presupuesto 25, Autoridad 20 |
 | 5 | **El escalamiento no hace nada**: solo escribe una marca en el texto | Nadie se entera y el bot sigue respondiendo | Alerta `@channel` en Slack y el bot se pausa 24 h para ese contacto |
@@ -28,14 +28,30 @@ cambia a `claude-sonnet-5-5` en el nodo **Claude Haiku**.
 
 ```
 WhatsApp Trigger
-  → Preparar Mensaje     ignora avisos de estado y duplicados, detecta el origen, arma el contexto
+  → Preparar Mensaje     ignora avisos de estado, detecta el origen y el tipo de mensaje
+  → ¿Es audio?           sí → descarga el audio de Meta y lo transcribe (Whisper en Groq)
+  → Guardar Mensaje      Postgres: descarta duplicados de Meta y guarda el origen del contacto
+  → Esperar 7 s          por si la persona sigue escribiendo
+  → Tomar Pendientes     solo sigue la ejecución del ÚLTIMO mensaje y junta toda la ráfaga en uno
   → ¿Atención humana?    si el contacto fue escalado → solo avisa en Slack (el bot no responde)
-  → ¿Es texto?           audio, imagen o sticker → pide que lo escriba
-  → LeadQualifier        Claude Haiku 5.5 + memoria por contacto + herramienta Registrar Lead (Sheets)
+  → ¿Es texto?           sticker, imagen sin texto o audio no transcrito → pide que lo escriba
+  → LeadQualifier        Claude Haiku 5.5 + memoria en Postgres + herramienta Registrar Lead (Sheets)
   → Separar Respuesta    mensaje para el cliente | evaluación interna (score, clasificación, escalar)
   → Responder por WhatsApp
   → Log de Supervisión (Slack)   🚨 escalados · 🔥 calientes · 🔍 resto
+  → ¿Escalar?            sí → pausa el bot 24 h para ese contacto (Postgres)
 ```
+
+### Mensajes en ráfaga
+Mucha gente escribe en varios mensajes cortos ("Hola" / "quería consultar" / "por anuncios"). Cada mensaje se guarda,
+se espera 7 segundos y solo la ejecución del último mensaje sigue: junta todos los pendientes y el agente responde
+**una sola vez**. Si llega otro mensaje después, se responde en su propio turno. El tiempo se cambia en el nodo
+**Esperar Más Mensajes**.
+
+### Audios
+Los audios se descargan de Meta y se transcriben con Whisper (`whisper-large-v3-turbo` en Groq, unos 0,04 USD por hora
+de audio). El agente recibe el texto como `[audio transcrito] ...`. Si la transcripción falla, se le pide a la persona
+que escriba. Las imágenes y videos con texto también se leen.
 
 ### Conexión con tus enlaces de WhatsApp
 Los enlaces del rastreador (`whatsapp-link-tracker` / `cloudflare-worker`) agregan `(ref: nombre-del-enlace)` al mensaje.
@@ -57,33 +73,49 @@ Si el contacto llega desde un **anuncio Click-to-WhatsApp de Meta**, se registra
 > la función de *coexistencia* de Meta. Para que el equipo atienda a los contactos escalados, usa una bandeja compartida
 > (por ejemplo Chatwoot o respond.io) conectada al mismo número.
 
-### 2. Google Sheets
+### 2. Postgres (memoria y estado)
+Sirve cualquier Postgres; lo más simple es **Supabase** (plan gratuito):
+1. Crea un proyecto y copia los datos de conexión (*Project Settings → Database*; usa el *Session pooler*).
+2. Abre el *SQL Editor* y ejecuta [`schema.sql`](schema.sql).
+3. En n8n crea una credencial **Postgres** con esos datos.
+
+La tabla de memoria del agente (`n8n_chat_histories`) la crea n8n sola la primera vez.
+
+### 3. Transcripción de audios (Groq)
+1. Crea una API key en [console.groq.com](https://console.groq.com).
+2. En n8n crea una credencial **Header Auth**: nombre `Authorization`, valor `Bearer TU_API_KEY`.
+
+Para usar OpenAI en su lugar: en el nodo **Transcribir Audio** cambia la URL a
+`https://api.openai.com/v1/audio/transcriptions`, el modelo a `whisper-1` y usa tu key de OpenAI en la credencial.
+
+### 4. Google Sheets
 Pestaña `CRM_Leads` con estos encabezados en la fila 1:
 ```
 Telefono	Origen	Nombre	Empresa	Necesidad	Plazo	Presupuesto	Autoridad	Score_BANT	Clasificacion	Ultima_Actualizacion
 ```
 Formatea la columna `Telefono` como texto sin formato.
 
-### 3. n8n
+### 5. n8n
 1. Importa `leadqualifier_whatsapp.json`.
-2. Asigna las credenciales (WhatsApp ×3 nodos, Anthropic, Google Sheets, Slack ×2) y reemplaza `REEMPLAZAR_ID_DE_LA_HOJA`
-   y `REEMPLAZAR_ID_CANAL_SLACK`.
+2. Asigna las credenciales (WhatsApp, Postgres, Groq, Anthropic, Google Sheets y Slack) y reemplaza
+   `REEMPLAZAR_ID_DE_LA_HOJA` y `REEMPLAZAR_ID_CANAL_SLACK`.
 3. Revisa el prompt del nodo **LeadQualifier**: ajusta servicios, presupuesto mínimo (300 USD/mes) y tono a tu agencia.
 4. **Probar sin WhatsApp:** el Trigger trae un mensaje de ejemplo fijado (*pinned data*). Pulsa *Test workflow* y verás el
-   recorrido completo (el envío por WhatsApp fallará si no hay credenciales: es esperado).
+   recorrido completo (el envío por WhatsApp fallará si no hay credenciales: es esperado). El ejemplo tiene un ID fijo:
+   para repetir la prueba cámbialo (`wamid.EJEMPLO2`…), porque el segundo envío se descarta como duplicado.
 5. Activa el workflow.
 
 ## Ajustes rápidos
-- **Horas de pausa tras escalar:** constante `HORAS_PAUSA_ESCALADO` en **Separar Respuesta**.
+- **Tiempo de espera de la ráfaga:** nodo **Esperar Más Mensajes** (7 segundos).
+- **Horas de pausa tras escalar:** el `24` del nodo **Pausar Contacto**.
+- **Reactivar el bot para un contacto:** `UPDATE wa_contactos SET pausado_hasta = NULL WHERE telefono = '549...';`
 - **Largo de la memoria:** `contextWindowLength` en **Memoria por Contacto** (20 mensajes).
-- **Reactivar el bot antes de tiempo:** ejecuta el workflow manualmente o espera a que venza la pausa.
+- **Versión de la API de Meta:** `v23.0` en el nodo **Obtener URL del Audio**. Meta retira versiones con el tiempo;
+  si deja de funcionar, súbela a la versión vigente.
 
 ## Limitaciones conocidas
-- **Memoria en RAM:** se borra si n8n se reinicia y no sirve en modo *queue* con varios workers. Para producción, cambia
-  el nodo por **Postgres Chat Memory** o **Redis Chat Memory** (misma clave: el teléfono).
-- **Mensajes en ráfaga:** si alguien envía 3 mensajes seguidos, el agente responde 3 veces. Se puede agrupar con una espera
-  de unos segundos (mejora futura).
-- **Audios:** hoy se pide que escriban. Se pueden transcribir descargando el audio y pasándolo por un servicio de
-  transcripción (mejora futura).
-- La pausa por escalamiento y el control de duplicados usan la memoria interna del workflow (*static data*), que solo se
-  guarda en ejecuciones de producción (workflow activo), no en pruebas manuales.
+- La espera de 7 segundos agrega ese tiempo a cada respuesta: es lo normal en una conversación de WhatsApp y evita
+  respuestas repetidas.
+- Si un mensaje llega justo mientras el agente está respondiendo, se responde en un turno aparte.
+- Los audios muy largos (más de 25 MB) no se transcriben y se pide que escriban.
+- Imágenes sin texto: el agente no las "ve"; se pide que describan por escrito.

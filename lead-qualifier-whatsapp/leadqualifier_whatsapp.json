@@ -7,7 +7,7 @@
           "messages"
         ]
       },
-      "id": "9b5562a1-6abf-45fe-8523-f02cacc3be49",
+      "id": "c32bdf64-1953-4ccc-9237-8f4e9499328f",
       "name": "WhatsApp Trigger",
       "type": "n8n-nodes-base.whatsAppTrigger",
       "typeVersion": 1,
@@ -15,7 +15,7 @@
         0,
         300
       ],
-      "webhookId": "a0b70423-eada-4b96-8ee9-6d4d6b17be1d",
+      "webhookId": "9f8d6920-5138-4ebb-90e6-f1e19e32d575",
       "credentials": {
         "whatsAppTriggerApi": {
           "id": "REEMPLAZAR",
@@ -25,9 +25,9 @@
     },
     {
       "parameters": {
-        "jsCode": "// Normaliza el evento de WhatsApp Cloud API y decide la ruta: agente / no_texto / pausado.\n// Ignora estados (enviado/entregado/leído) y mensajes duplicados que Meta reenvía.\nconst estado = $getWorkflowStaticData('global');\nestado.procesados = estado.procesados || [];\nestado.origenes = estado.origenes || {};\nestado.pausados = estado.pausados || {};\n\nconst j = $input.first().json;\nconst v = j.entry ? (((j.entry[0] || {}).changes || [])[0] || {}).value || {} : j;\nconst msg = (v.messages || [])[0];\nif (!msg) return [];                                   // es un aviso de estado, no un mensaje\nif (estado.procesados.includes(msg.id)) return [];     // reenvío duplicado de Meta\nestado.procesados.push(msg.id);\nif (estado.procesados.length > 500) estado.procesados = estado.procesados.slice(-500);\n\nconst telefono = String(msg.from || '');\nconst contacto = (v.contacts || []).find(c => c.wa_id === telefono) || (v.contacts || [])[0] || {};\nconst nombre_perfil = (contacto.profile || {}).name || '';\n\nlet texto = '';\nif (msg.type === 'text') texto = (msg.text || {}).body || '';\nelse if (msg.type === 'button') texto = (msg.button || {}).text || '';\nelse if (msg.type === 'interactive') {\n  const i = msg.interactive || {};\n  texto = (i.button_reply || {}).title || (i.list_reply || {}).title || '';\n}\n\n// Origen: anuncio Click-to-WhatsApp de Meta (referral) o código (ref: xxx) de nuestros enlaces.\n// Se guarda la primera vez para que no se pierda en los mensajes siguientes.\nconst ref = ((texto.match(/\\(ref:\\s*([a-z0-9-]+)\\)/i) || [])[1] || '').toLowerCase();\nconst referral = msg.referral;\nif (referral) {\n  estado.origenes[telefono] = `Anuncio Meta: ${referral.headline || referral.source_type || 'anuncio'}` +\n    (referral.source_id ? ` (id ${referral.source_id})` : '');\n} else if (ref && !estado.origenes[telefono]) {\n  estado.origenes[telefono] = `Enlace: ${ref}`;\n}\nconst origen = estado.origenes[telefono] || 'Directo / desconocido';\n\nconst textoCliente = texto.replace(/\\(ref:[^)]*\\)/gi, '').trim();\nconst pausado = Date.now() < (estado.pausados[telefono] || 0);\nconst esTexto = Boolean(textoCliente);\n\nreturn [{\n  json: {\n    ruta: pausado ? 'pausado' : (esTexto ? 'agente' : 'no_texto'),\n    telefono,\n    nombre_perfil,\n    origen,\n    tipo: msg.type,\n    texto_cliente: textoCliente,\n    phone_number_id: (v.metadata || {}).phone_number_id || '',\n    mensaje_para_agente:\n      '[Contexto del sistema]\\n' +\n      `Nombre de perfil de WhatsApp: ${nombre_perfil || 'desconocido'}\\n` +\n      `Origen del contacto: ${origen}\\n` +\n      '[Fin del contexto del sistema]\\n\\n' +\n      `Mensaje del cliente:\\n${textoCliente}`,\n  },\n}];\n"
+        "jsCode": "// Normaliza el evento de WhatsApp Cloud API. No guarda estado: duplicados, origen y pausas viven en Postgres.\nconst j = $input.first().json;\nconst v = j.entry ? (((j.entry[0] || {}).changes || [])[0] || {}).value || {} : j;\nconst msg = (v.messages || [])[0];\nif (!msg) return [];  // aviso de estado (enviado/entregado/leído): no hay nada que responder\n\nconst telefono = String(msg.from || '');\nconst contacto = (v.contacts || []).find(c => c.wa_id === telefono) || (v.contacts || [])[0] || {};\n\nlet texto = '';\nif (msg.type === 'text') texto = (msg.text || {}).body || '';\nelse if (msg.type === 'button') texto = (msg.button || {}).text || '';\nelse if (msg.type === 'interactive') {\n  const i = msg.interactive || {};\n  texto = (i.button_reply || {}).title || (i.list_reply || {}).title || '';\n} else if (['image', 'video', 'document'].includes(msg.type)) {\n  const caption = (msg[msg.type] || {}).caption || '';\n  texto = caption ? `[${msg.type} con texto] ${caption}` : '';\n}\n\n// Origen: anuncio Click-to-WhatsApp de Meta (referral) o código (ref: xxx) de nuestros enlaces\nconst ref = ((texto.match(/\\(ref:\\s*([a-z0-9-]+)\\)/i) || [])[1] || '').toLowerCase();\nconst referral = msg.referral;\nconst origen = referral\n  ? `Anuncio Meta: ${referral.headline || referral.source_type || 'anuncio'}` + (referral.source_id ? ` (id ${referral.source_id})` : '')\n  : (ref ? `Enlace: ${ref}` : '');\n\nconst audio = msg.type === 'audio' || msg.type === 'voice' ? (msg.audio || msg.voice || {}) : null;\n\nreturn [{\n  json: {\n    wamid: msg.id,\n    telefono,\n    nombre_perfil: (contacto.profile || {}).name || '',\n    tipo: msg.type,\n    texto: texto.replace(/\\(ref:[^)]*\\)/gi, '').trim(),\n    origen,\n    es_anuncio: Boolean(referral),\n    es_audio: Boolean(audio && audio.id),\n    audio_id: audio ? audio.id || '' : '',\n    phone_number_id: (v.metadata || {}).phone_number_id || '',\n  },\n}];\n"
       },
-      "id": "21f5c5e2-5ca3-4b49-91c4-2f002ae83589",
+      "id": "96178c38-8a69-4c0d-85c8-a8ab44a3d79a",
       "name": "Preparar Mensaje",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -46,12 +46,13 @@
           },
           "conditions": [
             {
-              "id": "5f293015-866b-445a-a93c-e51043244fff",
-              "leftValue": "={{ $json.ruta }}",
-              "rightValue": "pausado",
+              "id": "74dfa9f6-08e4-4de8-8d68-1351c0329ddb",
+              "leftValue": "={{ $json.es_audio }}",
+              "rightValue": "",
               "operator": {
-                "type": "string",
-                "operation": "equals"
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
               }
             }
           ],
@@ -59,12 +60,214 @@
         },
         "options": {}
       },
-      "id": "7da4ce85-4691-4200-838d-2db2997df688",
-      "name": "¿Atención Humana?",
+      "id": "c83ac41a-0d37-404a-a841-ea74d36baf13",
+      "name": "¿Es Audio?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
         440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v23.0/{{ $json.audio_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "options": {}
+      },
+      "id": "09e69b38-fa2b-4eb3-a2dd-c3433f0ea688",
+      "name": "Obtener URL del Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        80
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REEMPLAZAR",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "whatsAppApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "5f84826c-c8bb-458f-833b-423f4c28e74a",
+      "name": "Descargar Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        80
+      ],
+      "credentials": {
+        "whatsAppApi": {
+          "id": "REEMPLAZAR",
+          "name": "WhatsApp account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// La API de transcripción reconoce el formato por la extensión del archivo: WhatsApp envía audio OGG/Opus sin nombre.\nconst item = $input.first();\nconst bin = item.binary && item.binary.data;\nif (bin) {\n  const ext = /mpeg|mp3/.test(bin.mimeType || '') ? 'mp3' : /mp4|m4a|aac/.test(bin.mimeType || '') ? 'm4a' : 'ogg';\n  bin.fileName = `audio.${ext}`;\n  bin.fileExtension = ext;\n}\nreturn [item];\n"
+      },
+      "id": "ab89732e-8e49-446b-986a-38aafd115093",
+      "name": "Nombrar Audio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-large-v3-turbo"
+            },
+            {
+              "name": "language",
+              "value": "es"
+            },
+            {
+              "name": "response_format",
+              "value": "json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "7dcb83a3-bcff-4e99-9ae6-e2672b94128f",
+      "name": "Transcribir Audio",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        80
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REEMPLAZAR",
+          "name": "Groq (Authorization: Bearer ...)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Reemplaza el audio por su transcripción. Si la transcripción falló, el texto queda vacío\n// y el contacto recibe el mensaje de \"solo puedo leer texto\".\nconst prep = $('Preparar Mensaje').first().json;\nconst transcripcion = String(($input.first().json || {}).text || '').trim();\nreturn [{ json: { ...prep, texto: transcripcion ? `[audio transcrito] ${transcripcion}` : '' } }];\n"
+      },
+      "id": "08bace41-31b9-49dd-9f10-62bc90fdf36c",
+      "name": "Usar Transcripción",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH contacto AS (\n  INSERT INTO wa_contactos (telefono, nombre_perfil, origen)\n  VALUES ($1::text, NULLIF($2::text, ''), NULLIF($3::text, ''))\n  ON CONFLICT (telefono) DO UPDATE SET\n    nombre_perfil = COALESCE(EXCLUDED.nombre_perfil, wa_contactos.nombre_perfil),\n    -- un anuncio de Meta siempre actualiza el origen; un (ref) de enlace solo si no había origen\n    origen = CASE WHEN $6::text = 'true' THEN COALESCE(EXCLUDED.origen, wa_contactos.origen)\n                  ELSE COALESCE(wa_contactos.origen, EXCLUDED.origen) END,\n    actualizado = now()\n  RETURNING telefono\n)\nINSERT INTO wa_mensajes (wamid, telefono, tipo, texto)\nSELECT $4::text, telefono, $7::text, $5::text FROM contacto\nON CONFLICT (wamid) DO NOTHING\nRETURNING id, telefono;\n",
+        "options": {
+          "queryReplacement": "={{ [$json.telefono, $json.nombre_perfil, $json.origen, $json.wamid, $json.texto, String($json.es_anuncio), $json.tipo] }}"
+        }
+      },
+      "id": "306c6c76-1058-4dbc-9b3d-5fdf1d4f0650",
+      "name": "Guardar Mensaje",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 7,
+        "unit": "seconds"
+      },
+      "id": "3b5eb832-c970-46b2-8200-fe2d8eddc397",
+      "name": "Esperar Más Mensajes",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1980,
+        300
+      ],
+      "webhookId": "e2b739e3-be30-4414-9fb9-990f92087d75"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Solo continúa la ejecución del mensaje MÁS RECIENTE del contacto; las demás terminan sin filas.\n-- Esa ejecución toma todos los mensajes pendientes y los une en uno solo.\nWITH ultimo AS (\n  SELECT max(id) AS id FROM wa_mensajes WHERE telefono = $1 AND NOT procesado\n), lote AS (\n  UPDATE wa_mensajes m SET procesado = true\n  FROM ultimo\n  WHERE m.telefono = $1 AND NOT m.procesado AND ultimo.id = $2::bigint AND m.id <= $2::bigint\n  RETURNING m.id, m.texto, m.tipo\n)\nSELECT c.telefono,\n       COALESCE(c.nombre_perfil, '') AS nombre_perfil,\n       COALESCE(c.origen, 'Directo / desconocido') AS origen,\n       COALESCE(c.pausado_hasta > now(), false) AS pausado,\n       COALESCE(string_agg(NULLIF(l.texto, ''), E'\\n' ORDER BY l.id), '') AS texto_cliente,\n       string_agg(l.tipo, ',' ORDER BY l.id) AS tipos,\n       count(*) AS mensajes\nFROM lote l\nJOIN wa_contactos c ON c.telefono = $1\nGROUP BY c.telefono, c.nombre_perfil, c.origen, c.pausado_hasta;\n",
+        "options": {
+          "queryReplacement": "={{ [$('Guardar Mensaje').first().json.telefono, String($('Guardar Mensaje').first().json.id)] }}"
+        }
+      },
+      "id": "8247fbae-7030-4b72-b07a-d1efe985d04c",
+      "name": "Tomar Mensajes Pendientes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2200,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Arma el turno para el agente con todos los mensajes agrupados y decide la ruta.\nconst lote = $input.first().json;\nconst prep = $('Preparar Mensaje').first().json;\nconst texto = String(lote.texto_cliente || '').trim();\n\nreturn [{\n  json: {\n    ruta: lote.pausado ? 'pausado' : (texto ? 'agente' : 'no_texto'),\n    telefono: lote.telefono,\n    nombre_perfil: lote.nombre_perfil,\n    origen: lote.origen,\n    tipos: lote.tipos,\n    mensajes: Number(lote.mensajes),\n    texto_cliente: texto,\n    phone_number_id: prep.phone_number_id,\n    mensaje_para_agente:\n      '[Contexto del sistema]\\n' +\n      `Nombre de perfil de WhatsApp: ${lote.nombre_perfil || 'desconocido'}\\n` +\n      `Origen del contacto: ${lote.origen}\\n` +\n      (Number(lote.mensajes) > 1 ? `El cliente envió ${lote.mensajes} mensajes seguidos; respóndelos juntos en un solo mensaje.\\n` : '') +\n      '[Fin del contexto del sistema]\\n\\n' +\n      `Mensaje del cliente:\\n${texto}`,\n  },\n}];\n"
+      },
+      "id": "3b842aa8-55a1-4b77-aac5-12778864db31",
+      "name": "Armar Contexto",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
         300
       ]
     },
@@ -78,7 +281,39 @@
           },
           "conditions": [
             {
-              "id": "99c75090-ff07-4ada-992b-af16319abac1",
+              "id": "d13984ab-9f30-4cda-a7b6-9c4eb5c59f79",
+              "leftValue": "={{ $json.ruta }}",
+              "rightValue": "pausado",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "61782773-65ae-4f0f-9294-ca2a3589c815",
+      "name": "¿Atención Humana?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "e5fead82-72b4-4ca4-b018-a6de55e7d5af",
               "leftValue": "={{ $json.ruta }}",
               "rightValue": "agente",
               "operator": {
@@ -91,12 +326,12 @@
         },
         "options": {}
       },
-      "id": "ae27001b-626e-4c38-9e66-5ab273274442",
+      "id": "ef3037d8-48f1-441c-abc2-a45d9a33510f",
       "name": "¿Es Texto?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        660,
+        2860,
         400
       ]
     },
@@ -108,15 +343,15 @@
           "value": "REEMPLAZAR_ID_CANAL_SLACK",
           "mode": "id"
         },
-        "text": "=:bust_in_silhouette: *Mensaje de un contacto en atención humana* (el bot está en pausa)\n*Contacto:* {{ $json.nombre_perfil }} (+{{ $json.telefono }})\n*Mensaje:* {{ $json.texto_cliente || '(' + $json.tipo + ')' }}",
+        "text": "=:bust_in_silhouette: *Mensaje de un contacto en atención humana* (el bot está en pausa)\n*Contacto:* {{ $json.nombre_perfil }} (+{{ $json.telefono }})\n*Mensaje:* {{ $json.texto_cliente || '(' + $json.tipos + ')' }}",
         "otherOptions": {}
       },
-      "id": "5e637c02-b396-4e64-8766-db8f78773d91",
+      "id": "e963a06b-9f11-4bc9-86b0-935ef285a758",
       "name": "Avisar Mensaje en Atención Humana",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.3,
       "position": [
-        660,
+        2860,
         140
       ],
       "credentials": {
@@ -132,15 +367,15 @@
         "operation": "send",
         "phoneNumberId": "={{ $json.phone_number_id }}",
         "recipientPhoneNumber": "={{ $json.telefono }}",
-        "textBody": "¡Gracias por escribirnos! Por ahora solo puedo leer mensajes de texto. ¿Me cuentas por escrito en qué te podemos ayudar?",
+        "textBody": "¡Gracias por escribirnos! No pude leer tu mensaje. ¿Me cuentas por escrito en qué te podemos ayudar?",
         "additionalFields": {}
       },
-      "id": "b277ab58-65bb-4166-a0bf-e0bcb6d16d63",
+      "id": "37ec1298-f41e-4160-a5b5-12769cddec38",
       "name": "Responder No Texto",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        880,
+        3080,
         560
       ],
       "credentials": {
@@ -162,12 +397,12 @@
           "returnIntermediateSteps": true
         }
       },
-      "id": "500d6148-a459-49e4-8725-456658fdb823",
+      "id": "0189b9ac-3ca4-4e37-b1c6-df26a8684b19",
       "name": "LeadQualifier",
       "type": "@n8n/n8n-nodes-langchain.agent",
       "typeVersion": 1.6,
       "position": [
-        900,
+        3100,
         300
       ]
     },
@@ -182,12 +417,12 @@
           "maxTokensToSample": 4096
         }
       },
-      "id": "096eacd2-6da3-4e7c-9684-280d4bfaa37a",
+      "id": "f23dcc30-8b4c-4e85-b05c-da11c7ae0824",
       "name": "Claude Haiku",
       "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
       "typeVersion": 1.3,
       "position": [
-        780,
+        2980,
         540
       ],
       "credentials": {
@@ -200,17 +435,24 @@
     {
       "parameters": {
         "sessionIdType": "customKey",
-        "sessionKey": "={{ $('Preparar Mensaje').first().json.telefono }}",
+        "sessionKey": "={{ $('Armar Contexto').first().json.telefono }}",
+        "tableName": "n8n_chat_histories",
         "contextWindowLength": 20
       },
-      "id": "95f697e2-0b3b-4a67-8069-53ab3d556b1e",
+      "id": "48fda7d7-d7ae-4596-aca1-f8284e01ebb1",
       "name": "Memoria por Contacto",
-      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
       "typeVersion": 1.3,
       "position": [
-        920,
+        3120,
         540
-      ]
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres account"
+        }
+      }
     },
     {
       "parameters": {
@@ -230,8 +472,8 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "Telefono": "={{ $('Preparar Mensaje').first().json.telefono }}",
-            "Origen": "={{ $('Preparar Mensaje').first().json.origen }}",
+            "Telefono": "={{ $('Armar Contexto').first().json.telefono }}",
+            "Origen": "={{ $('Armar Contexto').first().json.origen }}",
             "Nombre": "={{ $fromAI('Nombre', 'Nombre del prospecto, o No informado', 'string') }}",
             "Empresa": "={{ $fromAI('Empresa', 'Empresa o marca del prospecto, o No informado', 'string') }}",
             "Necesidad": "={{ $fromAI('Necesidad', 'Resumen en una línea de lo que necesita', 'string') }}",
@@ -351,12 +593,12 @@
           "cellFormat": "RAW"
         }
       },
-      "id": "e396dbff-8205-494e-bae4-6fb39424a32b",
+      "id": "993ca51f-7ffd-4413-ae44-d0f405a03f21",
       "name": "Registrar Lead",
       "type": "n8n-nodes-base.googleSheetsTool",
       "typeVersion": 4.5,
       "position": [
-        1060,
+        3260,
         540
       ],
       "credentials": {
@@ -368,14 +610,14 @@
     },
     {
       "parameters": {
-        "jsCode": "// Separa lo que ve el cliente de la evaluación interna del agente.\n// El cliente NUNCA recibe score, clasificación ni marcas internas.\nconst HORAS_PAUSA_ESCALADO = 24;  // tiempo que el bot queda en silencio tras escalar a un humano\n\nconst prep = $('Preparar Mensaje').first().json;\nconst agente = $input.first().json;\nconst salida = String(agente.output || '');\nconst corte = salida.indexOf('<<<INTERNO>>>');\nconst visible = corte >= 0 ? salida.slice(0, corte) : salida;\nconst interno = corte >= 0 ? salida.slice(corte + '<<<INTERNO>>>'.length) : '';\n\nlet datos = {};\ntry {\n  const bloque = (interno.match(/\\{[\\s\\S]*\\}/) || [''])[0];\n  datos = JSON.parse(bloque);\n} catch (e) {\n  datos = { error_formato: true };\n}\n\n// Limpieza defensiva por si el modelo filtra marcas internas en la parte visible\nlet respuesta = visible\n  .replace(/^\\s*\\[(SCORE|CLASIFICACI[OÓ]N|ACCI[OÓ]N_TOMADA)\\].*$/gim, '')\n  .replace(/ESCALAR_A_HUMANO/g, '')\n  .trim();\n\nconst escalar = datos.escalar === true;\nif (escalar) {\n  const estado = $getWorkflowStaticData('global');\n  estado.pausados = estado.pausados || {};\n  estado.pausados[prep.telefono] = Date.now() + HORAS_PAUSA_ESCALADO * 3600 * 1000;\n}\n\nif (!respuesta) {\n  respuesta = escalar\n    ? 'Gracias por escribirnos. Una persona de nuestro equipo va a continuar esta conversación en breve.'\n    : '¡Gracias por tu mensaje! ¿Me cuentas un poco más sobre lo que necesitas?';\n}\n\nreturn [{\n  json: {\n    telefono: prep.telefono,\n    phone_number_id: prep.phone_number_id,\n    nombre_perfil: prep.nombre_perfil,\n    origen: prep.origen,\n    texto_cliente: prep.texto_cliente,\n    respuesta: respuesta.slice(0, 4000),  // límite de WhatsApp: 4096 caracteres\n    score: datos.score ?? '',\n    clasificacion: datos.clasificacion || 'SIN_DATOS',\n    accion: datos.accion || '',\n    motivo: datos.motivo || '',\n    faltan: Array.isArray(datos.faltan) ? datos.faltan.join(', ') : '',\n    escalar,\n    error_formato: Boolean(datos.error_formato),\n    pasos: JSON.stringify(agente.intermediateSteps || []).slice(0, 2000),\n  },\n}];\n"
+        "jsCode": "// Separa lo que ve el cliente de la evaluación interna del agente.\n// El cliente NUNCA recibe score, clasificación ni marcas internas.\n\nconst prep = $('Armar Contexto').first().json;\nconst agente = $input.first().json;\nconst salida = String(agente.output || '');\nconst corte = salida.indexOf('<<<INTERNO>>>');\nconst visible = corte >= 0 ? salida.slice(0, corte) : salida;\nconst interno = corte >= 0 ? salida.slice(corte + '<<<INTERNO>>>'.length) : '';\n\nlet datos = {};\ntry {\n  const bloque = (interno.match(/\\{[\\s\\S]*\\}/) || [''])[0];\n  datos = JSON.parse(bloque);\n} catch (e) {\n  datos = { error_formato: true };\n}\n\n// Limpieza defensiva por si el modelo filtra marcas internas en la parte visible\nlet respuesta = visible\n  .replace(/^\\s*\\[(SCORE|CLASIFICACI[OÓ]N|ACCI[OÓ]N_TOMADA)\\].*$/gim, '')\n  .replace(/ESCALAR_A_HUMANO/g, '')\n  .trim();\n\nconst escalar = datos.escalar === true;  // la pausa la guarda el nodo \"Pausar Contacto\" en Postgres\n\nif (!respuesta) {\n  respuesta = escalar\n    ? 'Gracias por escribirnos. Una persona de nuestro equipo va a continuar esta conversación en breve.'\n    : '¡Gracias por tu mensaje! ¿Me cuentas un poco más sobre lo que necesitas?';\n}\n\nreturn [{\n  json: {\n    telefono: prep.telefono,\n    phone_number_id: prep.phone_number_id,\n    nombre_perfil: prep.nombre_perfil,\n    origen: prep.origen,\n    texto_cliente: prep.texto_cliente,\n    respuesta: respuesta.slice(0, 4000),  // límite de WhatsApp: 4096 caracteres\n    score: datos.score ?? '',\n    clasificacion: datos.clasificacion || 'SIN_DATOS',\n    accion: datos.accion || '',\n    motivo: datos.motivo || '',\n    faltan: Array.isArray(datos.faltan) ? datos.faltan.join(', ') : '',\n    escalar,\n    error_formato: Boolean(datos.error_formato),\n    pasos: JSON.stringify(agente.intermediateSteps || []).slice(0, 2000),\n  },\n}];\n"
       },
-      "id": "f183fd24-88c7-4135-9483-812e5e734cf7",
+      "id": "67fc415c-68fe-49b4-a8ac-37bbc8b9a61d",
       "name": "Separar Respuesta",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1120,
+        3320,
         300
       ]
     },
@@ -387,12 +629,12 @@
         "textBody": "={{ $json.respuesta }}",
         "additionalFields": {}
       },
-      "id": "42e96233-bafb-4cba-96b6-af2b68641014",
+      "id": "3b402c0f-9fca-4bea-82f5-e452e3ae5e1b",
       "name": "Responder por WhatsApp",
       "type": "n8n-nodes-base.whatsApp",
       "typeVersion": 1,
       "position": [
-        1340,
+        3540,
         300
       ],
       "credentials": {
@@ -415,12 +657,12 @@
         "text": "={{ $('Separar Respuesta').first().json.escalar ? '<!channel> :rotating_light: *ESCALAR A HUMANO* (bot en pausa 24 h para este contacto)' : ($('Separar Respuesta').first().json.clasificacion === 'CALIENTE' ? ':fire: *Lead CALIENTE: contactar ya*' : ':mag: Conversación del agente') }}\n\n*Contacto:* {{ $('Separar Respuesta').first().json.nombre_perfil }} (+{{ $('Separar Respuesta').first().json.telefono }})\n*Origen:* {{ $('Separar Respuesta').first().json.origen }}\n*Cliente:* {{ $('Separar Respuesta').first().json.texto_cliente }}\n*Agente:* {{ $('Separar Respuesta').first().json.respuesta }}\n\n*Score:* {{ $('Separar Respuesta').first().json.score }} · *Clasificación:* {{ $('Separar Respuesta').first().json.clasificacion }} · *Acción:* {{ $('Separar Respuesta').first().json.accion }}\n*Motivo:* {{ $('Separar Respuesta').first().json.motivo }} · *Faltan:* {{ $('Separar Respuesta').first().json.faltan || '-' }}{{ $('Separar Respuesta').first().json.error_formato ? '\\n:warning: El agente no respetó el formato interno; revisar.' : '' }}\n```{{ $('Separar Respuesta').first().json.pasos }}```",
         "otherOptions": {}
       },
-      "id": "398ed99c-9784-4382-ac62-19901243eeba",
+      "id": "6b466b07-bfd8-43f4-8003-0c9395ecb405",
       "name": "Log de Supervision (Slack)",
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.3,
       "position": [
-        1560,
+        3760,
         300
       ],
       "credentials": {
@@ -433,18 +675,74 @@
     },
     {
       "parameters": {
-        "content": "## LeadQualifier por WhatsApp (Cloud API)\n**Autor:** Cesar Duarte\n\nWhatsApp Trigger → Preparar (filtra estados y duplicados, detecta origen) → Agente con memoria por contacto (Claude Haiku 5.5) → Separar respuesta pública / evaluación interna → WhatsApp → Slack.\n\nEscalado: el bot se pausa 24 h para ese contacto y avisa en Slack.\n\n> Reemplaza credenciales e IDs marcados como REEMPLAZAR_*.",
-        "width": 520,
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "32197cd9-c528-450d-bb52-916a0602ba90",
+              "leftValue": "={{ $json.escalar }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ddbb34f8-56ef-4d35-baab-8c02885c7410",
+      "name": "¿Escalar?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3540,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE wa_contactos SET pausado_hasta = now() + make_interval(hours => $2::int), actualizado = now() WHERE telefono = $1;",
+        "options": {
+          "queryReplacement": "={{ [$json.telefono, 24] }}"
+        }
+      },
+      "id": "d6e2e783-b3ad-4200-8737-5b9369fe8737",
+      "name": "Pausar Contacto",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3760,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## LeadQualifier por WhatsApp (Cloud API)\n**Autor:** Cesar Duarte\n\nWhatsApp Trigger → Preparar → (audio: transcribir con Whisper) → Guardar en Postgres (sin duplicados) → esperar 7 s → tomar todos los mensajes de la ráfaga → Agente con memoria en Postgres (Claude Haiku 5.5) → Separar respuesta pública / evaluación interna → WhatsApp → Slack.\n\nEscalado: el bot se pausa 24 h para ese contacto (tabla wa_contactos) y avisa en Slack.\n\n> Antes: ejecuta schema.sql en tu Postgres y reemplaza credenciales e IDs REEMPLAZAR_*.",
+        "width": 700,
         "height": 300,
         "color": 4
       },
-      "id": "3c13a3da-b814-41a7-b968-506771ae0724",
+      "id": "a050d933-b1c6-4ef7-9c0f-717ca5c8224e",
       "name": "Nota",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         -80,
-        -120
+        -220
       ]
     }
   ],
@@ -494,6 +792,123 @@
       ]
     },
     "Preparar Mensaje": {
+      "main": [
+        [
+          {
+            "node": "¿Es Audio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Es Audio?": {
+      "main": [
+        [
+          {
+            "node": "Obtener URL del Audio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Guardar Mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Obtener URL del Audio": {
+      "main": [
+        [
+          {
+            "node": "Descargar Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Descargar Audio": {
+      "main": [
+        [
+          {
+            "node": "Nombrar Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nombrar Audio": {
+      "main": [
+        [
+          {
+            "node": "Transcribir Audio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcribir Audio": {
+      "main": [
+        [
+          {
+            "node": "Usar Transcripción",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usar Transcripción": {
+      "main": [
+        [
+          {
+            "node": "Guardar Mensaje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar Mensaje": {
+      "main": [
+        [
+          {
+            "node": "Esperar Más Mensajes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar Más Mensajes": {
+      "main": [
+        [
+          {
+            "node": "Tomar Mensajes Pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tomar Mensajes Pendientes": {
+      "main": [
+        [
+          {
+            "node": "Armar Contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar Contexto": {
       "main": [
         [
           {
@@ -591,6 +1006,11 @@
             "node": "Responder por WhatsApp",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "¿Escalar?",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -600,6 +1020,17 @@
         [
           {
             "node": "Log de Supervision (Slack)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Escalar?": {
+      "main": [
+        [
+          {
+            "node": "Pausar Contacto",
             "type": "main",
             "index": 0
           }
