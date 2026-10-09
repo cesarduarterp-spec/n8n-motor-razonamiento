@@ -1,0 +1,4 @@
+ADMIN_KEY=clave-de-prueba-123
+N8N_CLAVE=cf-secreta
+# N8N_CLICS_URL=http://localhost:5678/webhook/wa-clics-cf
+TELEFONO_RESPALDO=5491100000000

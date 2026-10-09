@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enlaces de WhatsApp</title>
+<!--WA_CONFIG-->
+<style>
+  :root {
+    --bg: #f6f7f5; --card: #ffffff; --text: #1b1f1d; --muted: #66706b; --line: #e3e6e3;
+    --accent: #128c4a; --accent-soft: #e3f4ea; --bar: #25d366; --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1311; --card: #171c19; --text: #e8ece9; --muted: #98a29d; --line: #2a312d;
+      --accent: #3ddc84; --accent-soft: #1b2e23; --bar: #2fbf6b; --danger: #ff8a7a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1311; --card: #171c19; --text: #e8ece9; --muted: #98a29d; --line: #2a312d;
+    --accent: #3ddc84; --accent-soft: #1b2e23; --bar: #2fbf6b; --danger: #ff8a7a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 0 0 14px; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  p.sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+  textarea { min-height: 64px; resize: vertical; }
+  button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.sec { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .msg { margin-top: 12px; font-size: 14px; }
+  .msg.err { color: var(--danger); }
+  .result { margin-top: 14px; padding: 14px; background: var(--accent-soft); border-radius: 10px; display: none; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .result code { word-break: break-all; font-size: 14px; }
+  .result img { width: 120px; height: 120px; background: #fff; border-radius: 6px; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .kpi b { display: block; font-size: 26px; }
+  .kpi span { color: var(--muted); font-size: 13px; }
+  .bars div { display: grid; grid-template-columns: minmax(80px, 38%) 1fr 40px; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 6px; }
+  .bars i { display: block; height: 8px; border-radius: 4px; background: var(--bar); }
+  .bars em { font-style: normal; text-align: right; color: var(--muted); }
+  .bars .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; }
+  details summary { cursor: pointer; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Enlaces de WhatsApp con seguimiento</h1>
+  <p class="sub">Crea enlaces con nombre propio y UTM, y mide clics, dispositivo y ubicación de cada consulta.</p>
+
+  <details class="card" id="cfg">
+    <summary>Configuración de conexión</summary>
+    <div class="grid" style="margin-top:14px">
+      <div><label>Backend</label><select id="backend"><option value="cloudflare">Cloudflare Worker</option><option value="n8n">n8n</option></select></div>
+      <div><label>URL del backend</label><input id="n8n" placeholder="https://wa.tumarca.com"></div>
+      <div><label>Base de los enlaces cortos</label><input id="base" placeholder="https://wa.tumarca.com"></div>
+      <div><label>Clave de administrador</label><input id="clave" type="password" placeholder="CAMBIAR_ESTA_CLAVE"></div>
+    </div>
+    <div class="row"><button class="sec" id="guardarCfg">Guardar configuración</button><button class="sec" id="respaldo">Descargar respaldo de enlaces</button></div>
+    <div class="msg" id="msgCfg"></div>
+  </details>
+
+  <section class="card">
+    <h2>Nuevo enlace</h2>
+    <div class="grid">
+      <div><label>Nombre del enlace (slug)</label><input id="slug" placeholder="promo-octubre-ig"></div>
+      <div><label>WhatsApp (con código de país, sin +)</label><input id="telefono" placeholder="5491122334455" inputmode="tel"></div>
+      <div><label>Fuente (utm_source)</label>
+        <input id="utm_source" list="fuentes" placeholder="instagram">
+        <datalist id="fuentes"><option>instagram</option><option>facebook</option><option>tiktok</option><option>linkedin</option><option>google</option><option>youtube</option><option>email</option><option>qr</option><option>web</option></datalist>
+      </div>
+      <div><label>Medio (utm_medium)</label>
+        <input id="utm_medium" list="medios" placeholder="bio">
+        <datalist id="medios"><option>bio</option><option>historia</option><option>post</option><option>reel</option><option>anuncio</option><option>cpc</option><option>organico</option><option>flyer</option></datalist>
+      </div>
+      <div><label>Campaña (utm_campaign)</label><input id="utm_campaign" placeholder="black-friday-2026"></div>
+      <div><label>Contenido (utm_content)</label><input id="utm_content" placeholder="video-testimonio"></div>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div><label>Mensaje que se precarga en el chat</label><textarea id="mensaje" placeholder="¡Hola! Vi su publicación y quiero más información"></textarea></div>
+      <div><label>Descripción interna (opcional)</label><textarea id="descripcion" placeholder="Link de la bio de Instagram"></textarea></div>
+    </div>
+    <div class="row"><button id="crear">Crear enlace</button></div>
+    <div class="msg" id="msgCrear"></div>
+    <div class="result" id="resultado">
+      <img id="qr" alt="Código QR del enlace">
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:13px;color:var(--muted)">Tu enlace</div>
+        <code id="enlaceCreado"></code>
+        <div class="row" style="margin-top:8px"><button class="sec" id="copiar">Copiar</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="row" style="margin:0 0 12px">
+      <h2 style="margin:0;flex:1">Estadísticas</h2>
+      <select id="filtroSlug" style="width:auto"><option value="">Todos los enlaces</option></select>
+      <input id="desde" type="date" style="width:auto" aria-label="Desde">
+      <input id="hasta" type="date" style="width:auto" aria-label="Hasta">
+      <button id="actualizar">Actualizar</button>
+    </div>
+    <div class="msg" id="msgStats"></div>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card"><h3>Enlaces</h3><div class="tablewrap"><table id="tablaEnlaces"></table></div></div>
+
+    <div class="grid">
+      <div class="card"><h3>Fuente (UTM)</h3><div class="bars" id="por_fuente"></div></div>
+      <div class="card"><h3>App de origen</h3><div class="bars" id="por_app"></div></div>
+      <div class="card"><h3>Dispositivo</h3><div class="bars" id="por_dispositivo"></div></div>
+      <div class="card"><h3>Sistema</h3><div class="bars" id="por_sistema"></div></div>
+      <div class="card"><h3>País</h3><div class="bars" id="por_pais"></div></div>
+      <div class="card"><h3>Ciudad</h3><div class="bars" id="por_ciudad"></div></div>
+      <div class="card"><h3>Campaña</h3><div class="bars" id="por_campana"></div></div>
+      <div class="card"><h3>Clics por día</h3><div class="bars" id="por_dia"></div></div>
+    </div>
+
+    <div class="card"><h3>Últimos clics</h3><div class="tablewrap"><table id="tablaClics"></table></div></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = {
+  get(k) { try { return localStorage.getItem('walinks_' + k) || ''; } catch { return ''; } },
+  set(k, v) { try { localStorage.setItem('walinks_' + k, v); } catch {} },
+};
+
+const CAMPOS_CFG = ['backend', 'n8n', 'base', 'clave'];
+const predeterminado = window.WA_CONFIG || {};
+CAMPOS_CFG.forEach(k => { $(k).value = store.get(k) || { n8n: predeterminado.url, base: predeterminado.base, backend: predeterminado.backend }[k] || $(k).value; });
+if (!$('n8n').value || !$('clave').value) $('cfg').open = true;
+
+$('guardarCfg').onclick = () => {
+  const n8n = $('n8n').value.trim().replace(/\/+$/, '');
+  $('n8n').value = n8n;
+  if (!$('base').value.trim() && n8n) $('base').value = $('backend').value === 'n8n' ? n8n + '/webhook/wa' : n8n;
+  CAMPOS_CFG.forEach(k => store.set(k, $(k).value.trim()));
+  cargarStats();
+};
+
+const cfg = () => {
+  const n8n = $('n8n').value.trim().replace(/\/+$/, '');
+  const esN8n = $('backend').value === 'n8n';
+  return {
+    n8n, esN8n,
+    base: ($('base').value.trim() || (esN8n ? n8n + '/webhook/wa' : n8n)).replace(/\/+$/, ''),
+    clave: $('clave').value.trim(),
+  };
+};
+// Rutas de cada backend: n8n usa la clave en el body/query, Cloudflare en la cabecera Authorization
+const rutas = {
+  crear: c => c.n8n + (c.esN8n ? '/webhook/wa-crear' : '/api/links'),
+  stats: c => c.n8n + (c.esN8n ? '/webhook/wa-stats' : '/api/stats'),
+};
+const cabeceras = c => c.esN8n ? {} : { Authorization: 'Bearer ' + c.clave };
+
+function setMsg(el, texto, error) { el.textContent = texto; el.className = 'msg' + (error ? ' err' : ''); }
+
+$('crear').onclick = async () => {
+  const c = cfg();
+  if (!c.n8n) return setMsg($('msgCrear'), 'Primero configura la URL del backend.', true);
+  const datos = { clave: c.clave };
+  ['slug', 'telefono', 'mensaje', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'descripcion']
+    .forEach(k => { datos[k] = $(k).value.trim(); });
+  setMsg($('msgCrear'), 'Creando…');
+  try {
+    const r = await fetch(rutas.crear(c), {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...cabeceras(c) }, body: JSON.stringify(datos),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
+    const url = c.base + '/' + j.slug;
+    $('enlaceCreado').textContent = url;
+    $('qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=' + encodeURIComponent(url);
+    $('resultado').style.display = 'flex';
+    setMsg($('msgCrear'), 'Enlace creado.');
+    cargarStats();
+  } catch (e) {
+    setMsg($('msgCrear'), 'No se pudo crear: ' + e.message, true);
+  }
+};
+
+$('copiar').onclick = async () => {
+  try { await navigator.clipboard.writeText($('enlaceCreado').textContent); $('copiar').textContent = 'Copiado ✓'; }
+  catch { $('copiar').textContent = 'Copia manualmente'; }
+  setTimeout(() => { $('copiar').textContent = 'Copiar'; }, 1800);
+};
+
+function barras(id, lista) {
+  const max = Math.max(1, ...(lista || []).map(x => x.total));
+  $(id).innerHTML = (lista || []).slice(0, 10).map(x =>
+    `<div><span class="name" title="${esc(x.nombre)}">${esc(x.nombre)}</span><i style="width:${(x.total / max * 100).toFixed(1)}%"></i><em>${x.total}</em></div>`
+  ).join('') || '<span style="color:var(--muted);font-size:13px">Sin datos todavía</span>';
+}
+
+function tabla(id, columnas, filas) {
+  $(id).innerHTML = '<thead><tr>' + columnas.map(c => `<th>${esc(c[1])}</th>`).join('') + '</tr></thead><tbody>' +
+    (filas.length ? filas.map(f => '<tr>' + columnas.map(c => `<td>${esc(typeof c[2] === 'function' ? c[2](f) : f[c[0]])}</td>`).join('') + '</tr>').join('')
+      : `<tr><td colspan="${columnas.length}" style="color:var(--muted)">Sin datos todavía</td></tr>`) + '</tbody>';
+}
+
+async function cargarStats() {
+  const c = cfg();
+  if (!c.n8n) return;
+  const p = new URLSearchParams({ slug: $('filtroSlug').value, desde: $('desde').value, hasta: $('hasta').value });
+  if (c.esN8n) p.set('clave', c.clave);
+  setMsg($('msgStats'), 'Cargando…');
+  try {
+    const r = await fetch(rutas.stats(c) + '?' + p, { headers: cabeceras(c) });
+    const s = await r.json();
+    if (!s.ok) throw new Error(s.error || 'Respuesta inválida');
+    setMsg($('msgStats'), '');
+
+    const ctr = s.total_clics ? (s.visitantes_unicos / s.total_clics * 100).toFixed(0) + '%' : '—';
+    const top = (s.por_fuente || [])[0];
+    $('kpis').innerHTML = [
+      ['Clics totales', s.total_clics], ['Visitantes únicos', s.visitantes_unicos],
+      ['% únicos', ctr], ['Fuente principal', top ? top.nombre : '—'],
+    ].map(([t, v]) => `<div class="kpi"><b>${esc(v)}</b><span>${esc(t)}</span></div>`).join('');
+
+    const sel = $('filtroSlug'), actual = sel.value;
+    if (!actual) {
+      sel.innerHTML = '<option value="">Todos los enlaces</option>' +
+        s.enlaces.map(e => `<option value="${esc(e.slug)}">${esc(e.slug)}</option>`).join('');
+    }
+
+    tabla('tablaEnlaces', [
+      ['slug', 'Enlace', e => c.base + '/' + e.slug], ['utm_source', 'Fuente'], ['utm_campaign', 'Campaña'],
+      ['clics', 'Clics'], ['unicos', 'Únicos'], ['ultimo_clic', 'Último clic'], ['descripcion', 'Descripción'],
+    ], s.enlaces);
+
+    ['por_fuente', 'por_app', 'por_dispositivo', 'por_sistema', 'por_pais', 'por_ciudad', 'por_campana', 'por_dia']
+      .forEach(k => barras(k, s[k]));
+
+    tabla('tablaClics', [
+      ['fecha', 'Fecha'], ['slug', 'Enlace'], ['utm_source', 'Fuente'], ['app_origen', 'App'],
+      ['dispositivo', 'Dispositivo'], ['sistema', 'Sistema'], ['ciudad', 'Ciudad'], ['pais', 'País'],
+    ], s.ultimos_clics || []);
+  } catch (e) {
+    setMsg($('msgStats'), 'No se pudieron cargar las estadísticas: ' + e.message, true);
+  }
+}
+
+$('respaldo').onclick = async () => {
+  const c = cfg();
+  if (c.esN8n) return setMsg($('msgCfg'), 'Con n8n el respaldo es tu Google Sheets (pestaña Enlaces).');
+  try {
+    const r = await fetch(c.n8n + '/api/links?completo=1', { headers: cabeceras(c) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Error ' + r.status);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ enlaces: j.enlaces }, null, 2)], { type: 'application/json' }));
+    a.download = 'respaldo-enlaces-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    setMsg($('msgCfg'), j.enlaces.length + ' enlaces descargados. Se restauran con POST /api/links/importar.');
+  } catch (e) {
+    setMsg($('msgCfg'), 'No se pudo descargar: ' + e.message, true);
+  }
+};
+
+$('actualizar').onclick = cargarStats;
+cargarStats();
+</script>
+</body>
+</html>
