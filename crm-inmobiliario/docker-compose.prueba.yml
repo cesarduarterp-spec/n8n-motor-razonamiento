@@ -24,12 +24,23 @@ services:
   worker:
     mem_limit: 384m
 
-  # Túnel HTTPS gratuito (Cloudflare Quick Tunnel, sin cuenta) para que Meta/WhatsApp
-  # puedan llamar a los webhooks de tu PC. La URL pública aparece en:
-  #   docker compose -f docker-compose.yml -f docker-compose.prueba.yml logs tunnel | grep trycloudflare
+  # Túnel HTTPS gratuito con DIRECCIÓN FIJA (ngrok, plan gratis): Meta/WhatsApp llega a tu PC
+  # y la URL no cambia al reiniciar. Requiere NGROK_AUTHTOKEN y NGROK_DOMAIN en .env (ver PRUEBA.md).
+  #   docker compose -f docker-compose.yml -f docker-compose.prueba.yml --profile tunnel up -d
   tunnel:
-    image: cloudflare/cloudflared:latest  # fijar una versión concreta si se usa más allá de la prueba
-    command: ["tunnel", "--no-autoupdate", "--url", "http://api:3000"]
+    image: ngrok/ngrok:latest  # fijar una versión concreta si se usa más allá de la prueba
+    command: ["http", "--url=${NGROK_DOMAIN:-falta-NGROK_DOMAIN-en-.env}", "api:3000"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
     depends_on: [api]
     restart: unless-stopped
     profiles: ["tunnel"]
+
+  # Alternativa sin cuenta (Cloudflare Quick Tunnel): la URL CAMBIA en cada reinicio.
+  #   … --profile tunnel-rapido up -d   y ver la URL con   … logs tunnel-rapido | grep trycloudflare
+  tunnel-rapido:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://api:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+    profiles: ["tunnel-rapido"]

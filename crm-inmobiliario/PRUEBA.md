@@ -10,7 +10,7 @@ Esta guía levanta el CRM completo en **tu Docker local** (o en un servidor grat
 | IA legal (Claude) | **Apagada** (`CLAUDE_ENABLED=false`): reclamos y mora se derivan a una persona | $0 |
 | Agenda | Agenda propia del CRM + link iCal (sin Google OAuth) | $0 |
 | WhatsApp | Número de prueba gratuito de Meta | $0 |
-| Webhooks desde internet | Túnel de Cloudflare sin cuenta | $0 |
+| Webhooks desde internet | Túnel ngrok con dominio fijo (plan gratis) | $0 |
 | Backups a la nube | Desactivados (los datos quedan en tu Docker) | $0 |
 
 > ⚠️ **Datos de prueba, no de clientes reales.** En el plan gratuito de Gemini, Google puede usar el contenido de las consultas para mejorar sus productos. Para datos reales hay que pasar a un plan pago.
@@ -87,16 +87,23 @@ El bot ofrece horarios libres y reserva solo; la agenda vive en el CRM.
 - **Bloquear horarios** (vacaciones, trámites):
   `POST /agenda/blocks` con `{"startsAt":"2026-10-20T09:00:00-03:00","endsAt":"2026-10-20T13:00:00-03:00","reason":"Trámite"}`
 - **Ver las visitas en el celular**: `POST /agenda/feed-link` devuelve un link `.ics` privado. En Google Calendar (desde la web): *Otros calendarios → + → Desde URL* y pegarlo. En iPhone: *Ajustes → Calendario → Cuentas → Añadir calendario suscrito*.
-  - El link tiene que ser **público** (con el túnel o en un servidor); `localhost` no le sirve a Google.
+  - El link tiene que ser **público** (con el túnel o en un servidor); `localhost` no le sirve a Google. Con el dominio fijo de ngrok el link no cambia.
   - Google actualiza los calendarios suscritos cada varias horas (Apple y Outlook, más seguido). La reserva en el CRM es inmediata; lo que demora es verlo en el celular.
   - Si se comparte por error: `POST /agenda/feed-link` de nuevo genera otro y anula el anterior.
 - **Opcional, que el bot respete tu agenda personal**: en Google Calendar → *Configuración* → tu calendario → *Dirección secreta en formato iCal* → copiarla y enviarla con `PUT /agenda/external-calendar {"url":"https://calendar.google.com/…/basic.ics"}`. El CRM la lee cada 5 minutos (solo lectura; se guarda cifrada).
 
 ## 6. WhatsApp de prueba (opcional, gratis)
 
-1. Levantar el túnel: `docker compose -f docker-compose.yml -f docker-compose.prueba.yml --profile tunnel up -d` y copiar la URL `https://….trycloudflare.com` de `… logs tunnel`. Ponerla en `PUBLIC_BASE_URL` y reiniciar (`… up -d`).
+1. **Túnel con dirección fija (una sola vez):** crear cuenta gratis en <https://dashboard.ngrok.com>, copiar el *Authtoken* y, en *Domains*, reclamar el dominio gratuito (ej. `tu-inmobiliaria.ngrok-free.app`). Completar en `.env`:
+   ```
+   NGROK_AUTHTOKEN=<tu authtoken>
+   NGROK_DOMAIN=tu-inmobiliaria.ngrok-free.app
+   PUBLIC_BASE_URL=https://tu-inmobiliaria.ngrok-free.app
+   ```
+   y levantar: `docker compose -f docker-compose.yml -f docker-compose.prueba.yml --profile tunnel up -d`.
+   Probar desde cualquier lado: `https://tu-inmobiliaria.ngrok-free.app/health`.
 2. En <https://developers.facebook.com> crear una app de tipo *Business* → agregar **WhatsApp**. Meta da un **número de prueba gratuito** que puede escribir hasta a 5 números verificados (el tuyo, por ejemplo).
-3. *WhatsApp → Configuración → Webhook*: URL `https://….trycloudflare.com/webhooks/meta`, token de verificación = `META_VERIFY_TOKEN`; suscribir el campo `messages`. Copiar el *App Secret* (Configuración básica) en `META_APP_SECRET`.
+3. *WhatsApp → Configuración → Webhook*: URL `https://tu-inmobiliaria.ngrok-free.app/webhooks/meta`, token de verificación = `META_VERIFY_TOKEN`; suscribir el campo `messages`. Copiar el *App Secret* (Configuración básica) en `META_APP_SECRET`.
 4. Vincular el número a tu inmobiliaria (ID del número y token de acceso, en *API Setup*):
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prueba.yml run --rm \
@@ -105,7 +112,9 @@ El bot ofrece horarios libres y reserva solo; la agenda vive en el CRM.
    ```
 5. Escribirle al número de prueba desde tu WhatsApp: "Hola, busco un 2 ambientes en Palermo".
 
-Limitaciones del modo gratuito: la URL del túnel rápido **cambia cada vez que se reinicia** (hay que actualizarla en Meta) y el token temporal de Meta vence a las 24 h (para algo más estable: token de *usuario del sistema* en Meta Business).
+Limitaciones del modo gratuito: el plan gratis de ngrok tiene un cupo mensual de tráfico (de sobra para una prueba) y, al abrir la URL desde un **navegador**, muestra una página de aviso la primera vez (a los webhooks de Meta y a los calendarios no les afecta). El token temporal de Meta vence a las 24 h: para algo estable, generar un token de *usuario del sistema* en Meta Business.
+
+¿Sin cuenta en ngrok? `--profile tunnel-rapido` usa Cloudflare sin registrarse, pero la URL cambia en cada reinicio y hay que actualizarla en Meta.
 
 ## 7. Servidor gratuito (si no querés dejar la PC prendida)
 
