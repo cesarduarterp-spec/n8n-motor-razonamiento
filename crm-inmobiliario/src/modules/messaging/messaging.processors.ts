@@ -2,6 +2,7 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import type { Job, Queue } from 'bullmq';
 import { and, eq } from 'drizzle-orm';
+import { RequestContext } from '../../common/audit/request-context.js';
 import { type AgentJob, defaultJobOptions, type OutboundJob, Q, type WebhookJob } from '../../common/queue/queues.js';
 import { env } from '../../config/env.js';
 import { DatabaseService } from '../../database/database.service.js';
@@ -24,7 +25,11 @@ export class WebhookProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<WebhookJob>) {
+  process(job: Job<WebhookJob>) {
+    return RequestContext.run({ actorType: 'system', agentId: `ingest-${job.data.provider}` }, () => this.handle(job));
+  }
+
+  private async handle(job: Job<WebhookJob>) {
     const payload = job.data.payload as Record<string, unknown>;
     let inbound: InboundMessage[];
     switch (job.data.provider) {
@@ -125,7 +130,14 @@ export class OutboundProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<OutboundJob>) {
+  process(job: Job<OutboundJob>) {
+    return RequestContext.run(
+      job.data.author === 'human' ? { actorType: 'system', agentId: 'outbound-approved' } : { actorType: 'agent', agentId: job.data.author },
+      () => this.handle(job),
+    );
+  }
+
+  private async handle(job: Job<OutboundJob>) {
     const { tenantId, conversationId, text, author } = job.data;
     const target = await this.db.withTenant(tenantId, async (tx) => {
       const [row] = await tx

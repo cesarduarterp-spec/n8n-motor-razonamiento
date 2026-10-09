@@ -1,6 +1,7 @@
 import { BullModule, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import type { Job } from 'bullmq';
+import { RequestContext } from '../../common/audit/request-context.js';
 import { type ContractExtractionJob, Q } from '../../common/queue/queues.js';
 import { StorageService } from '../../common/storage.js';
 import { AgentsCoreModule } from '../agents/agents-core.module.js';
@@ -15,7 +16,9 @@ export class ContractExtractionProcessor extends WorkerHost {
   }
 
   process(job: Job<ContractExtractionJob>) {
-    return this.extraction.process(job.data.tenantId, job.data.documentId);
+    return RequestContext.run({ actorType: 'agent', agentId: 'claude-contract-extractor' }, () =>
+      this.extraction.process(job.data.tenantId, job.data.documentId),
+    );
   }
 }
 

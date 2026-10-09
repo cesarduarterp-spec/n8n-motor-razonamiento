@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { type AuthUser, CurrentUser, Roles } from '../../common/auth/auth.js';
 import { todayIn } from './dates.js';
 import { BillingService } from './billing.service.js';
@@ -26,5 +26,13 @@ export class FinanceController {
   @Roles('admin', 'broker', 'back_office')
   upcoming(@CurrentUser() user: AuthUser, @Query('from') from?: string) {
     return this.billing.upcomingDue(user.tenantId, from ?? todayIn());
+  }
+
+  /** Confirma un comprobante (back-office) e imputa el pago a la cuota. */
+  @Post('receipts/:id/confirm')
+  @Roles('admin', 'back_office')
+  confirm(@CurrentUser() user: AuthUser, @Param('id', ParseUUIDPipe) id: string, @Body() body: { amount?: number }) {
+    if (body?.amount !== undefined && !(typeof body.amount === 'number' && body.amount > 0)) throw new BadRequestException('amount inválido');
+    return this.billing.confirmReceipt(user.tenantId, id, user.userId, body?.amount);
   }
 }

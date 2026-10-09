@@ -4,7 +4,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { DelayedError, type Job, type Queue } from 'bullmq';
 import { Decimal } from 'decimal.js';
 import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
-import { type AgentJob, defaultJobOptions, type OutboundJob, Q } from '../../common/queue/queues.js';
+import { RequestContext } from '../../common/audit/request-context.js';
+import { type AgentJob, defaultJobOptions, type MatchingJob, type OutboundJob, Q } from '../../common/queue/queues.js';
 import { RedisLock } from '../../common/queue/redis.js';
 import { StorageService } from '../../common/storage.js';
 import { DatabaseService } from '../../database/database.service.js';
@@ -12,14 +13,18 @@ import {
   agentDrafts,
   contractParties,
   conversations,
-  leads,
   messages,
   paymentReceipts,
   paymentSchedules,
 } from '../../database/schema.js';
+import { BookingService } from '../booking/booking.service.js';
+import { MatchingService } from '../matching/matching.service.js';
+import { activeLeadFor, PipelineService } from '../pipeline/pipeline.service.js';
 import { PropertiesService } from '../properties/properties.service.js';
 import type { Classification, ReceiptExtraction } from './agent.schemas.js';
 import { ClaudeSpecialist } from './claude-specialist.service.js';
+import type { AiTrace } from './llm-clients.js';
+import { LlmClients } from './llm-clients.js';
 import { GeminiFrontline } from './gemini-frontline.service.js';
 import { type AgentContext, MemoryService } from './memory.service.js';
 import { route } from './router.js';
@@ -32,7 +37,8 @@ const FRONTLINE_SYSTEM = `Sos el asistente virtual de una inmobiliaria argentina
 español rioplatense, con mensajes breves (máx. 3-4 oraciones), cálidos y concretos.
 - Para buscar propiedades usá SIEMPRE la herramienta search_properties; nunca inventes inmuebles, precios ni direcciones.
 - Para saldos, vencimientos o comprobantes usá get_account_status.
-- Si el contacto quiere visitar un inmueble usá request_visit; un asesor confirma día y horario.
+- Para coordinar una visita: primero get_visit_slots (ofrecé 2 o 3 horarios con su etiqueta), y cuando el contacto elija
+  uno, reservalo con book_visit usando el valor "start" exacto devuelto. Nunca confirmes una visita sin book_visit.
 - No das asesoramiento legal ni negociás condiciones: si surge, decí que un asesor lo va a contactar.
 - Si no tenés la información, decilo y ofrecé derivar a un asesor.`;
 
@@ -59,15 +65,21 @@ const FRONTLINE_TOOLS: FunctionDeclaration[] = [
     parametersJsonSchema: { type: 'object', properties: {} },
   },
   {
-    name: 'request_visit',
-    description: 'Registra el pedido de visita a un inmueble para que un asesor lo confirme.',
+    name: 'get_visit_slots',
+    description: 'Devuelve horarios libres del asesor asignado para visitar un inmueble en los próximos 7 días.',
     parametersJsonSchema: {
       type: 'object',
-      properties: {
-        propertyCode: { type: 'string' },
-        preferredTimes: { type: 'string', description: 'Días/horarios que propone el contacto' },
-      },
+      properties: { propertyCode: { type: 'string', description: 'Código del inmueble (de search_properties)' } },
       required: ['propertyCode'],
+    },
+  },
+  {
+    name: 'book_visit',
+    description: 'Reserva la visita en el horario elegido por el contacto (valor "start" de get_visit_slots).',
+    parametersJsonSchema: {
+      type: 'object',
+      properties: { propertyCode: { type: 'string' }, start: { type: 'string', description: 'ISO 8601 exacto de get_visit_slots' } },
+      required: ['propertyCode', 'start'],
     },
   },
 ];
@@ -93,10 +105,20 @@ export class AgentOrchestrator {
     private readonly memory: MemoryService,
     private readonly properties: PropertiesService,
     private readonly storage: StorageService,
+    private readonly pipeline: PipelineService,
+    private readonly matching: MatchingService,
+    private readonly booking: BookingService,
+    private readonly llm: LlmClients,
     @InjectQueue(Q.OUTBOUND) private readonly outbound: Queue<OutboundJob>,
+    @InjectQueue(Q.MATCHING) private readonly matchQueue: Queue<MatchingJob>,
   ) {}
 
-  async handleTurn(job: AgentJob): Promise<{ route: string; intent?: string }> {
+  /** Todo el turno corre como actor `agent:orchestrator`; cada motor, con su propia identidad. */
+  handleTurn(job: AgentJob): Promise<{ route: string; intent?: string }> {
+    return RequestContext.asAgent('orchestrator', () => this.turn(job));
+  }
+
+  private async turn(job: AgentJob): Promise<{ route: string; intent?: string }> {
     const { tenantId, conversationId, contactId } = job;
 
     const { pending, conversation } = await this.db.withTenant(tenantId, async (tx) => {
@@ -125,11 +147,13 @@ export class AgentOrchestrator {
 
     if (!conversation || conversation.humanTakeover || pending.length === 0) return { route: 'skip' };
 
+    const trace: AiTrace = { conversationId, messageId: pending.at(-1)?.id };
+
     // 1) Enriquecimiento multimodal (Gemini).
     const texts: string[] = [];
     let receiptNote: string | undefined;
     for (const m of pending) {
-      const enriched = await this.enrich(tenantId, contactId, m);
+      const enriched = await RequestContext.asAgent('gemini-frontline', () => this.enrich(tenantId, contactId, m, trace));
       if (enriched.text) texts.push(enriched.text);
       if (enriched.receiptNote) receiptNote = enriched.receiptNote;
     }
@@ -140,10 +164,28 @@ export class AgentOrchestrator {
     const digest = `${ctx.memory.summary}\n${this.memory.transcript(ctx).slice(-3000)}`;
     const classification = receiptNote
       ? receiptClassification()
-      : await this.gemini.classify(tenantId, digest, latestText);
+      : await RequestContext.asAgent('gemini-frontline', () => this.gemini.classify(tenantId, digest, latestText, trace));
 
     const isTenantOrLandlord = ctx.contractIds.length > 0 || ctx.contact.kinds.some((k) => k === 'tenant' || k === 'landlord');
     const decision = route(classification, latestText, { isTenantOrLandlord });
+    trace.routingReason = decision.engine === 'gemini' ? `gemini: intent=${classification.intent}` : `${decision.engine}: ${decision.reason}`;
+
+    // Decisión de ruteo: entrada propia en el log inmutable de IA.
+    await this.llm.record({
+      tenantId,
+      engine: 'router',
+      model: 'rules+classifier',
+      task: 'route',
+      conversationId,
+      messageId: trace.messageId,
+      routingReason: trace.routingReason,
+      prompt: { latestText },
+      rawResponse: { classification, decision },
+      outcome: 'ok',
+    });
+
+    // Pipeline: requerimientos → matching → asignación → etapa.
+    await this.updatePipeline(tenantId, contactId, classification, latestText);
 
     // 3) Respuesta según el motor.
     if (decision.engine === 'human') {
@@ -152,25 +194,19 @@ export class AgentOrchestrator {
       );
       await this.send(tenantId, conversationId, 'agent_gemini', 'Perfecto, te paso con una persona del equipo. En breve te escriben por acá.');
     } else if (decision.engine === 'claude') {
-      await this.specialist(tenantId, conversationId, ctx, classification, latestText);
+      await RequestContext.asAgent('claude-specialist', () => this.specialist(tenantId, conversationId, ctx, classification, latestText, trace));
     } else {
-      const reply = receiptNote ?? (await this.frontline(tenantId, contactId, ctx, latestText));
+      const reply = receiptNote ?? (await RequestContext.asAgent('gemini-frontline', () => this.frontline(tenantId, contactId, ctx, latestText, trace)));
       if (reply) await this.send(tenantId, conversationId, 'agent_gemini', reply);
     }
 
     // 4) Marcar mensajes procesados y actualizar memoria.
-    await this.db.withTenant(tenantId, async (tx) => {
-      await tx
+    await this.db.withTenant(tenantId, (tx) =>
+      tx
         .update(messages)
         .set({ intent: classification.intent })
-        .where(inArray(messages.id, pending.map((m) => m.id)));
-      if (classification.intent === 'property_search' || classification.intent === 'visit_request') {
-        await tx
-          .update(leads)
-          .set({ stage: classification.intent === 'visit_request' ? 'visit_scheduled' : 'contacted', requirements: classification.entities })
-          .where(and(eq(leads.contactId, contactId), inArray(leads.stage, ['new', 'contacted'])));
-      }
-    });
+        .where(inArray(messages.id, pending.map((m) => m.id))),
+    );
     await this.maybeSummarize(tenantId, contactId, pending.length + 1);
 
     this.log.log(`turno ${conversationId}: ${classification.intent} → ${decision.engine}`);
@@ -179,24 +215,24 @@ export class AgentOrchestrator {
 
   // ───────────── Enriquecimiento ─────────────
 
-  private async enrich(tenantId: string, contactId: string, m: MessageRow): Promise<{ text?: string; receiptNote?: string }> {
+  private async enrich(tenantId: string, contactId: string, m: MessageRow, trace: AiTrace): Promise<{ text?: string; receiptNote?: string }> {
     if (!m.mediaPath || !m.mediaMime) return { text: m.body ?? undefined };
     const file = await this.storage.get(tenantId, m.mediaPath);
 
     if (m.kind === 'audio') {
-      const transcript = await this.gemini.transcribe(tenantId, file, m.mediaMime);
+      const transcript = await this.gemini.transcribe(tenantId, file, m.mediaMime, trace);
       await this.saveEnrichment(tenantId, m.id, { transcript });
       return { text: transcript };
     }
 
     if (m.kind === 'image' || (m.kind === 'document' && m.mediaMime === 'application/pdf')) {
-      const receipt = await this.gemini.readReceipt(tenantId, file, m.mediaMime);
+      const receipt = await this.gemini.readReceipt(tenantId, file, m.mediaMime, trace);
       if (receipt.isPaymentReceipt) {
         const note = await this.registerReceipt(tenantId, contactId, m, receipt);
         await this.saveEnrichment(tenantId, m.id, { receipt });
         return { text: m.body ?? '[comprobante de pago]', receiptNote: note };
       }
-      const description = m.kind === 'image' ? await this.gemini.describeImage(tenantId, file, m.mediaMime) : '';
+      const description = m.kind === 'image' ? await this.gemini.describeImage(tenantId, file, m.mediaMime, trace) : '';
       await this.saveEnrichment(tenantId, m.id, { description });
       return { text: [m.body, description && `[imagen: ${description}]`].filter(Boolean).join(' ') };
     }
@@ -274,7 +310,7 @@ export class AgentOrchestrator {
 
   // ───────────── Motores ─────────────
 
-  private async frontline(tenantId: string, contactId: string, ctx: AgentContext, latestText: string): Promise<string> {
+  private async frontline(tenantId: string, contactId: string, ctx: AgentContext, latestText: string, trace: AiTrace): Promise<string> {
     const history: Content[] = ctx.history.slice(-12).map((h) => ({
       role: h.direction === 'inbound' ? 'user' : 'model',
       parts: [{ text: h.text }],
@@ -309,21 +345,24 @@ export class AgentOrchestrator {
               .orderBy(asc(paymentSchedules.dueDate))
               .limit(3),
           );
-        case 'request_visit':
-          await this.db.withTenant(tenantId, (tx) =>
-            tx
-              .update(leads)
-              .set({ stage: 'visit_scheduled', requirements: sql`${leads.requirements} || ${JSON.stringify({ visit: args })}::jsonb` })
-              .where(eq(leads.contactId, contactId)),
+        case 'get_visit_slots':
+        case 'book_visit': {
+          const lead = await this.db.withTenant(tenantId, (tx) => activeLeadFor(tx, contactId));
+          if (!lead) return { error: 'No hay un lead activo para este contacto' };
+          const ref = { propertyCode: String(args.propertyCode ?? '') };
+          return RequestContext.asAgent('booker', () =>
+            name === 'get_visit_slots'
+              ? this.booking.availableSlots(tenantId, lead.id, ref, 4)
+              : this.booking.book(tenantId, lead.id, ref, String(args.start ?? ''), 'agent:booker'),
           );
-          return { ok: true, message: 'Pedido registrado; un asesor confirma día y horario.' };
+        }
         default:
           throw new Error(`Herramienta desconocida: ${name}`);
       }
-    });
+    }, trace);
   }
 
-  private async specialist(tenantId: string, conversationId: string, ctx: AgentContext, c: Classification, latestText: string) {
+  private async specialist(tenantId: string, conversationId: string, ctx: AgentContext, c: Classification, latestText: string, trace: AiTrace) {
     const contractContext = await this.db.withTenant(tenantId, (tx) => this.memory.contractContext(tx, ctx.contractIds));
     const d = await this.claude.decide({
       tenantId,
@@ -333,6 +372,7 @@ export class AgentOrchestrator {
       transcript: this.memory.transcript(ctx),
       latestMessage: latestText,
       contractContext,
+      trace,
     });
 
     const contractId = ctx.contractIds[0];
@@ -372,6 +412,43 @@ export class AgentOrchestrator {
         'Gracias por escribirnos. Estamos revisando tu consulta con el equipo y te respondemos a la brevedad por este medio.',
       );
     }
+  }
+
+  /**
+   * Efectos comerciales del turno: si el contacto expresó qué busca, se
+   * actualizan sus requerimientos vectorizados, se asigna asesor por
+   * round-robin (las reglas de zona/tipo ya tienen datos), se avanza el
+   * Kanban y se encola el smart matching.
+   */
+  private async updatePipeline(tenantId: string, contactId: string, c: Classification, latestText: string) {
+    const lead = await this.db.withTenant(tenantId, (tx) => activeLeadFor(tx, contactId));
+    if (!lead) return;
+    const e = c.entities;
+    const commercial = c.intent === 'property_search' || c.intent === 'visit_request';
+    const hasRequirements = Boolean(e.operation || e.neighborhood || e.propertyType || e.maxPrice || e.bedrooms);
+
+    if (commercial && hasRequirements) {
+      await RequestContext.asAgent('matcher', () =>
+        this.matching.upsertRequirements(tenantId, lead.id, {
+          operation: e.operation,
+          neighborhoods: e.neighborhood ? [e.neighborhood] : [],
+          propertyTypes: e.propertyType ? [e.propertyType] : [],
+          maxPrice: e.maxPrice,
+          currency: e.currency,
+          minBedrooms: e.bedrooms,
+          naturalLanguage: latestText.slice(0, 500),
+        }),
+      );
+      await this.matchQueue.add('lead', { kind: 'lead', tenantId, leadId: lead.id }, {
+        ...defaultJobOptions,
+        deduplication: { id: `match-lead-${lead.id}`, ttl: 60_000 },
+      });
+    }
+
+    await this.db.withTenant(tenantId, async (tx) => {
+      if (!lead.assignedUserId) await this.pipeline.assign(tx, tenantId, lead.id);
+      if (commercial && hasRequirements) await this.pipeline.advanceTo(tx, lead.id, 'qualified');
+    });
   }
 
   private async maybeSummarize(tenantId: string, contactId: string, newMessages: number) {

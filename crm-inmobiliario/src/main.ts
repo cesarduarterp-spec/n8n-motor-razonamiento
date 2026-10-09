@@ -11,6 +11,8 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(ApiModule, { rawBody: true });
   app.useBodyParser('json', { limit: '2mb' });
   app.useBodyParser('text', { type: ['application/atom+xml', 'application/xml'] }); // WebSub de YouTube
+  // Detrás de un reverse proxy / ingress: req.ip = IP real del cliente (para el audit trail).
+  app.set('trust proxy', process.env.TRUST_PROXY_HOPS ? Number(process.env.TRUST_PROXY_HOPS) : 1);
   app.enableShutdownHooks();
   await app.listen(config.PORT, '0.0.0.0');
   Logger.log(`API escuchando en :${config.PORT}`, 'Bootstrap');

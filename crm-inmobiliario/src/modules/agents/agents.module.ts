@@ -3,6 +3,9 @@ import { Module } from '@nestjs/common';
 import { Q } from '../../common/queue/queues.js';
 import { RedisLock } from '../../common/queue/redis.js';
 import { StorageService } from '../../common/storage.js';
+import { BookingCoreModule } from '../booking/booking.module.js';
+import { MatchingModule } from '../matching/matching.module.js';
+import { PipelineCoreModule } from '../pipeline/pipeline.module.js';
 import { PropertiesModule } from '../properties/properties.module.js';
 import { AgentsCoreModule } from './agents-core.module.js';
 import { DraftsController } from './drafts.controller.js';
@@ -19,7 +22,14 @@ export class AgentsApiModule {}
 
 /** Worker: orquestador híbrido. */
 @Module({
-  imports: [AgentsCoreModule, PropertiesModule, BullModule.registerQueue({ name: Q.OUTBOUND })],
+  imports: [
+    AgentsCoreModule,
+    PropertiesModule,
+    PipelineCoreModule,
+    MatchingModule,
+    BookingCoreModule,
+    BullModule.registerQueue({ name: Q.OUTBOUND }, { name: Q.MATCHING }),
+  ],
   providers: [MemoryService, StorageService, RedisLock, AgentOrchestrator, AgentProcessor],
 })
 export class AgentsWorkerModule {}

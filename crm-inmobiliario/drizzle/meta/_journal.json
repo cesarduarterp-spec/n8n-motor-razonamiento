@@ -15,6 +15,34 @@
       "when": 1791580858822,
       "tag": "0001_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791582262357,
+      "tag": "0002_tokko_audit_add",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791582293587,
+      "tag": "0003_audit_zero_trust",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791582374164,
+      "tag": "0004_drop_legacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791583105869,
+      "tag": "0005_ai_logs_retention",
+      "breakpoints": true
     }
   ]
 }

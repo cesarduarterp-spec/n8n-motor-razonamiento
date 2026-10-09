@@ -1,16 +1,19 @@
-import { type Content, type FunctionDeclaration, type Part } from '@google/genai';
+import { type Content, type FunctionDeclaration, type GenerateContentResponse, type Part } from '@google/genai';
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { env } from '../../config/env.js';
-import { LlmClients } from './llm-clients.js';
+import { type AiTrace, LlmClients, redactBinary } from './llm-clients.js';
 import { Classification, MemoryUpdate, ReceiptExtraction } from './agent.schemas.js';
 
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<unknown>;
+
+type ToolTrace = { name: string; args: unknown; result?: unknown; error?: string };
 
 /**
  * Motor frontline (Gemini): baja latencia y multimodal. Responsable de
  * clasificar, transcribir audios, leer comprobantes, responder consultas de
  * catálogo con function calling, resumir memoria y generar embeddings.
+ * Cada llamada queda en ai_decision_logs con prompt, tools y respuesta cruda.
  */
 @Injectable()
 export class GeminiFrontline {
@@ -20,6 +23,34 @@ export class GeminiFrontline {
     return env().GEMINI_MODEL;
   }
 
+  private async log(
+    tenantId: string,
+    task: string,
+    trace: AiTrace | undefined,
+    started: number,
+    prompt: unknown,
+    res: GenerateContentResponse | undefined,
+    extra: { tools?: ToolTrace[]; outcome?: string; detail?: Record<string, unknown>; raw?: unknown } = {},
+  ) {
+    await this.llm.record({
+      tenantId,
+      engine: 'gemini',
+      model: this.model,
+      task,
+      conversationId: trace?.conversationId,
+      messageId: trace?.messageId,
+      routingReason: trace?.routingReason,
+      prompt: redactBinary(prompt),
+      toolsInvoked: extra.tools,
+      rawResponse: extra.raw ?? (res ? { candidates: res.candidates, promptFeedback: res.promptFeedback } : null),
+      inputTokens: res?.usageMetadata?.promptTokenCount,
+      outputTokens: res?.usageMetadata?.candidatesTokenCount,
+      latencyMs: Date.now() - started,
+      outcome: extra.outcome ?? (res?.text || res?.functionCalls?.length ? 'ok' : 'error'),
+      detail: extra.detail,
+    });
+  }
+
   /** generateContent con salida JSON validada por Zod (el schema se envía como JSON Schema). */
   private async structured<S extends z.ZodType>(
     tenantId: string,
@@ -27,10 +58,11 @@ export class GeminiFrontline {
     schema: S,
     system: string,
     parts: Part[],
+    trace?: AiTrace,
   ): Promise<z.infer<S>> {
     const ai = await this.llm.geminiClient(tenantId);
     const started = Date.now();
-    const res = await ai.models.generateContent({
+    const request = {
       model: this.model,
       contents: [{ role: 'user', parts }],
       config: {
@@ -39,22 +71,22 @@ export class GeminiFrontline {
         responseJsonSchema: z.toJSONSchema(schema),
         temperature: 0.1,
       },
-    });
-    await this.llm.record({
-      tenantId,
-      engine: 'gemini',
-      model: this.model,
-      task,
-      inputTokens: res.usageMetadata?.promptTokenCount,
-      outputTokens: res.usageMetadata?.candidatesTokenCount,
-      latencyMs: Date.now() - started,
-      outcome: res.text ? 'ok' : 'error',
-    });
+    };
+    const res = await ai.models.generateContent(request);
+    await this.log(tenantId, task, trace, started, { system, parts }, res);
     if (!res.text) throw new Error(`Gemini (${task}) devolvió respuesta vacía`);
     return schema.parse(JSON.parse(res.text));
   }
 
-  classify(tenantId: string, conversationDigest: string, latestText: string): Promise<Classification> {
+  private async plain(tenantId: string, task: string, parts: Part[], trace?: AiTrace, temperature = 0): Promise<string> {
+    const ai = await this.llm.geminiClient(tenantId);
+    const started = Date.now();
+    const res = await ai.models.generateContent({ model: this.model, contents: [{ role: 'user', parts }], config: { temperature } });
+    await this.log(tenantId, task, trace, started, { parts }, res);
+    return res.text?.trim() ?? '';
+  }
+
+  classify(tenantId: string, conversationDigest: string, latestText: string, trace?: AiTrace): Promise<Classification> {
     return this.structured(
       tenantId,
       'classify',
@@ -62,31 +94,27 @@ export class GeminiFrontline {
       `Clasificás mensajes entrantes de clientes de una inmobiliaria argentina (interesados, inquilinos y propietarios).
 Elegí UNA intención. Usá contract_claim, legal_dispute, renegotiation o delinquency ante cualquier señal de conflicto
 contractual, reclamo de dinero, amenaza legal (carta documento, abogado, desalojo, intimación), pedido de rebaja/rescisión
-o anuncio de que no se podrá pagar. En la duda entre una intención comercial y una legal, elegí la legal.`,
+o anuncio de que no se podrá pagar. En la duda entre una intención comercial y una legal, elegí la legal.
+En entities extraé también lo que el contacto busca (zona, tipo, presupuesto, dormitorios) si lo menciona.`,
       [{ text: `Contexto reciente:\n${conversationDigest}\n\nÚltimo mensaje del contacto:\n${latestText}` }],
+      trace,
     );
   }
 
   /** Transcripción de notas de voz (WhatsApp envía audio/ogg; opus). */
-  async transcribe(tenantId: string, audio: Buffer, mimeType: string): Promise<string> {
-    const ai = await this.llm.geminiClient(tenantId);
-    const res = await ai.models.generateContent({
-      model: this.model,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: mimeType.split(';')[0]!, data: audio.toString('base64') } },
-            { text: 'Transcribí literalmente este audio en español rioplatense. Devolvé solo la transcripción.' },
-          ],
-        },
+  transcribe(tenantId: string, audio: Buffer, mimeType: string, trace?: AiTrace): Promise<string> {
+    return this.plain(
+      tenantId,
+      'transcribe',
+      [
+        { inlineData: { mimeType: mimeType.split(';')[0]!, data: audio.toString('base64') } },
+        { text: 'Transcribí literalmente este audio en español rioplatense. Devolvé solo la transcripción.' },
       ],
-      config: { temperature: 0 },
-    });
-    return res.text?.trim() ?? '';
+      trace,
+    );
   }
 
-  readReceipt(tenantId: string, image: Buffer, mimeType: string): Promise<ReceiptExtraction> {
+  readReceipt(tenantId: string, image: Buffer, mimeType: string, trace?: AiTrace): Promise<ReceiptExtraction> {
     return this.structured(
       tenantId,
       'read_receipt',
@@ -94,30 +122,28 @@ o anuncio de que no se podrá pagar. En la duda entre una intención comercial y
       `Analizás imágenes enviadas por inquilinos. Determiná si es un comprobante de pago (transferencia bancaria,
 Mercado Pago, depósito, etc.) y extraé sus datos. No inventes: si un dato no se lee, devolvé null.`,
       [{ inlineData: { mimeType: mimeType.split(';')[0]!, data: image.toString('base64') } }, { text: 'Extraé los datos.' }],
+      trace,
     );
   }
 
   /** Describe una imagen que no es comprobante (foto de una rotura, de un aviso, etc.). */
-  async describeImage(tenantId: string, image: Buffer, mimeType: string): Promise<string> {
-    const ai = await this.llm.geminiClient(tenantId);
-    const res = await ai.models.generateContent({
-      model: this.model,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: mimeType.split(';')[0]!, data: image.toString('base64') } },
-            { text: 'Describí en 2 oraciones qué muestra esta imagen, en el contexto de una inmobiliaria.' },
-          ],
-        },
+  describeImage(tenantId: string, image: Buffer, mimeType: string, trace?: AiTrace): Promise<string> {
+    return this.plain(
+      tenantId,
+      'describe_image',
+      [
+        { inlineData: { mimeType: mimeType.split(';')[0]!, data: image.toString('base64') } },
+        { text: 'Describí en 2 oraciones qué muestra esta imagen, en el contexto de una inmobiliaria.' },
       ],
-    });
-    return res.text?.trim() ?? '';
+      trace,
+      0.2,
+    );
   }
 
   /**
    * Respuesta conversacional con function calling (catálogo, estado de
-   * cuenta, visitas). Itera hasta que el modelo deja de pedir herramientas.
+   * cuenta, agenda de visitas). Itera hasta que el modelo deja de pedir
+   * herramientas y registra UNA entrada con todo el recorrido.
    */
   async converse(
     tenantId: string,
@@ -125,55 +151,80 @@ Mercado Pago, depósito, etc.) y extraé sus datos. No inventes: si un dato no s
     history: Content[],
     tools: FunctionDeclaration[],
     execute: ToolExecutor,
-    maxSteps = 4,
+    trace?: AiTrace,
+    maxSteps = 5,
   ): Promise<string> {
     const ai = await this.llm.geminiClient(tenantId);
     const contents = [...history];
-    for (let step = 0; step < maxSteps; step++) {
-      const started = Date.now();
+    const toolTrace: ToolTrace[] = [];
+    const steps: unknown[] = [];
+    const started = Date.now();
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let finalText: string | undefined;
+
+    for (let step = 0; step < maxSteps && finalText === undefined; step++) {
       const res = await ai.models.generateContent({
         model: this.model,
         contents,
         config: { systemInstruction: system, tools: [{ functionDeclarations: tools }], temperature: 0.4 },
       });
-      await this.llm.record({
-        tenantId,
-        engine: 'gemini',
-        model: this.model,
-        task: 'converse',
-        inputTokens: res.usageMetadata?.promptTokenCount,
-        outputTokens: res.usageMetadata?.candidatesTokenCount,
-        latencyMs: Date.now() - started,
-        outcome: 'ok',
-      });
+      inputTokens += res.usageMetadata?.promptTokenCount ?? 0;
+      outputTokens += res.usageMetadata?.candidatesTokenCount ?? 0;
+      steps.push(res.candidates?.[0]?.content ?? null);
 
       const calls = res.functionCalls ?? [];
-      if (calls.length === 0) return res.text?.trim() ?? '';
-
+      if (calls.length === 0) {
+        finalText = res.text?.trim() ?? '';
+        break;
+      }
       const modelContent = res.candidates?.[0]?.content;
       if (modelContent) contents.push(modelContent);
       const responses: Part[] = [];
       for (const call of calls) {
-        let result: unknown;
+        const args = (call.args ?? {}) as Record<string, unknown>;
+        const entry: ToolTrace = { name: call.name ?? '', args };
         try {
-          result = await execute(call.name ?? '', (call.args ?? {}) as Record<string, unknown>);
+          entry.result = await execute(entry.name, args);
         } catch (err) {
-          result = { error: err instanceof Error ? err.message : String(err) };
+          entry.error = err instanceof Error ? err.message : String(err);
         }
-        responses.push({ functionResponse: { id: call.id, name: call.name, response: { result } } });
+        toolTrace.push(entry);
+        responses.push({
+          functionResponse: { id: call.id, name: call.name, response: entry.error ? { error: entry.error } : { result: entry.result } },
+        });
       }
       contents.push({ role: 'user', parts: responses });
     }
-    return 'Dame un momento que lo consulto con un asesor y te escribimos enseguida.';
+
+    const reply = finalText ?? 'Dame un momento que lo consulto con un asesor y te escribimos enseguida.';
+    await this.llm.record({
+      tenantId,
+      engine: 'gemini',
+      model: this.model,
+      task: 'converse',
+      conversationId: trace?.conversationId,
+      messageId: trace?.messageId,
+      routingReason: trace?.routingReason,
+      prompt: redactBinary({ system, history, tools: tools.map((t) => t.name) }),
+      toolsInvoked: toolTrace,
+      rawResponse: { steps, reply },
+      inputTokens,
+      outputTokens,
+      latencyMs: Date.now() - started,
+      outcome: finalText === undefined ? 'max_steps' : 'ok',
+    });
+    return reply;
   }
 
-  summarizeMemory(tenantId: string, previousSummary: string, transcript: string) {
+  summarizeMemory(tenantId: string, previousSummary: string, transcript: string, trace?: AiTrace) {
     return this.structured(
       tenantId,
       'summarize_memory',
       MemoryUpdate,
       'Mantenés la memoria de largo plazo de un CRM inmobiliario. Integrá el resumen previo con la conversación nueva.',
       [{ text: `Resumen previo:\n${previousSummary || '(vacío)'}\n\nConversación nueva:\n${transcript}` }],
+      trace,
     );
   }
 

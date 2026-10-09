@@ -1,6 +1,7 @@
 # Entorno completo: Postgres+pgvector, Redis, migraciones, API y workers.
 #   cp .env.example .env   # completar secretos
 #   docker compose up -d --build
+#   cp backup.env.example backup.env && docker compose --profile backup up -d   # backups cifrados a S3/GCS
 #   docker compose run --rm api node dist/database/seed.js   # alta de la primera inmobiliaria
 name: crm-inmobiliario
 
@@ -23,13 +24,30 @@ x-app: &app
 
 services:
   postgres:
-    image: pgvector/pgvector:0.8.0-pg17
+    build: ./docker/postgres
+    image: crm-postgres:17-pgvector-walg
+    # Archivado continuo de WAL (PITR, RPO ≈ 60 s). Ver docker/postgres/backup/.
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=/usr/local/bin/archive-wal.sh %p
+      - -c
+      - archive_timeout=60
     environment:
       POSTGRES_DB: crm
       POSTGRES_USER: crm_owner
       POSTGRES_PASSWORD: ${CRM_OWNER_PASSWORD}
       CRM_APP_PASSWORD: ${CRM_APP_PASSWORD}
       CRM_SYSTEM_PASSWORD: ${CRM_SYSTEM_PASSWORD}
+      BACKUP_REQUIRED: ${BACKUP_REQUIRED:-true}
+    # Credenciales de WAL-G separadas del .env de la app (la base no necesita las API keys de LLMs).
+    env_file:
+      - path: backup.env
+        required: false
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -38,6 +56,28 @@ services:
       interval: 5s
       retries: 20
     restart: unless-stopped
+
+  # Backups base diarios (delta/incrementales) cifrados a S3/GCS + retención.
+  pg-backup:
+    image: crm-postgres:17-pgvector-walg
+    command: ["backup-loop.sh"]
+    user: postgres
+    environment:
+      PGHOST: postgres
+      PGUSER: crm_owner
+      PGPASSWORD: ${CRM_OWNER_PASSWORD}
+      PGDATABASE: crm
+      PGDATA: /var/lib/postgresql/data
+    env_file:
+      - path: backup.env
+        required: false
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles: ["backup"]
 
   redis:
     image: redis:7.4-alpine

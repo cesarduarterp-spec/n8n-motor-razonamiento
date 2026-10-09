@@ -24,6 +24,19 @@ const CreateProperty = z.object({
   totalM2: z.number().optional(),
   tags: z.array(z.string()).default([]),
   metadata: z.record(z.string(), z.unknown()).default({}),
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
+  showExactAddress: z.boolean().default(false),
+  media: z
+    .array(
+      z.object({
+        type: z.enum(['photo', 'video', 'tour360', 'floorplan']),
+        url: z.string().url().startsWith('https://'),
+        provider: z.enum(['youtube', 'matterport', 'kuula', 'other']).optional(),
+        caption: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 
 @Controller('properties')
@@ -42,6 +55,8 @@ export class PropertiesController {
       expenses: p.expenses?.toFixed(2),
       coveredM2: p.coveredM2?.toFixed(2),
       totalM2: p.totalM2?.toFixed(2),
+      latitude: p.latitude?.toFixed(6),
+      longitude: p.longitude?.toFixed(6),
     });
   }
 

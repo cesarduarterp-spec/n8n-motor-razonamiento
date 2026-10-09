@@ -1,4 +1,7 @@
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
+import type { Queue } from 'bullmq';
+import { defaultJobOptions, type MatchingJob, Q } from '../../common/queue/queues.js';
 import { and, cosineDistance, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service.js';
 import { properties } from '../../database/schema.js';
@@ -14,10 +17,10 @@ export interface PropertySearch {
   limit?: number;
 }
 
-export type NewProperty = Omit<typeof properties.$inferInsert, 'tenantId' | 'id' | 'embedding' | 'embeddingUpdatedAt'>;
+export type NewProperty = Omit<typeof properties.$inferInsert, 'tenantId' | 'id' | 'embedding' | 'embeddingUpdatedAt' | 'version' | 'deletedAt' | 'deletedBy'>;
 
 /** Texto canónico que se embebe: lo que un interesado describiría al buscar. */
-function embeddingText(p: NewProperty): string {
+export function embeddingText(p: Pick<NewProperty, 'title' | 'operation' | 'propertyType' | 'neighborhood' | 'city' | 'province' | 'bedrooms' | 'coveredM2' | 'tags' | 'description'>): string {
   return [
     p.title,
     `${p.operation === 'sale' ? 'Venta' : 'Alquiler'} de ${p.propertyType}`,
@@ -36,6 +39,7 @@ export class PropertiesService {
   constructor(
     private readonly db: DatabaseService,
     private readonly gemini: GeminiFrontline,
+    @InjectQueue(Q.MATCHING) private readonly matching: Queue<MatchingJob>,
   ) {}
 
   async create(tenantId: string, input: NewProperty) {
@@ -46,6 +50,8 @@ export class PropertiesService {
         .values({ ...input, tenantId, embedding, embeddingUpdatedAt: new Date() })
         .returning({ id: properties.id, code: properties.code }),
     );
+    // Propiedad nueva → buscar leads abiertos a los que les interesa (async).
+    if (row) await this.matching.add('property', { kind: 'property', tenantId, propertyId: row.id }, defaultJobOptions);
     return row;
   }
 

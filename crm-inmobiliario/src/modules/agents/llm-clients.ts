@@ -3,7 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { Injectable } from '@nestjs/common';
 import { env } from '../../config/env.js';
 import { DatabaseService } from '../../database/database.service.js';
-import { agentRuns } from '../../database/schema.js';
+import { aiDecisionLogs } from '../../database/schema.js';
 import { TenantSecretsService } from '../tenants/tenant-secrets.service.js';
 
 /**
@@ -48,8 +48,31 @@ export class LlmClients {
     return client;
   }
 
-  /** Registro de auditoría de cada invocación (modelo, tokens, latencia, resultado). */
-  async record(run: typeof agentRuns.$inferInsert): Promise<void> {
-    await this.db.withTenant(run.tenantId, (tx) => tx.insert(agentRuns).values(run)).catch(() => undefined);
+  /**
+   * Log inmutable de cada decisión de IA (prompt, tools, respuesta cruda,
+   * tokens, ruteo). Un trigger replica una entrada AI_INTERACTION en el
+   * audit trail encadenado. Fail-closed: si el log no se puede escribir, la
+   * operación falla (y el job se reintenta) en lugar de actuar sin traza.
+   */
+  async record(run: AiDecisionInput): Promise<void> {
+    await this.db.withTenant(run.tenantId, (tx) => tx.insert(aiDecisionLogs).values(run));
   }
+}
+
+export type AiDecisionInput = typeof aiDecisionLogs.$inferInsert;
+
+/** Correlación de una llamada LLM con la conversación y el motivo de ruteo. */
+export interface AiTrace {
+  conversationId?: string;
+  messageId?: string;
+  routingReason?: string;
+}
+
+/** Reemplaza binarios por un descriptor (no se guardan audios/imágenes dentro del log). */
+export function redactBinary(value: unknown): unknown {
+  return JSON.parse(
+    JSON.stringify(value, (key, v) =>
+      (key === 'data' || key === 'inlineData') && typeof v === 'string' && v.length > 256 ? `<base64 ${v.length} chars>` : v,
+    ),
+  );
 }

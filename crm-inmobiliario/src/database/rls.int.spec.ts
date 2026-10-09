@@ -58,8 +58,13 @@ describe.skipIf(!enabled)('RLS multi-tenant', async () => {
   });
 
   afterAll(async () => {
-    await db.system.delete(schema.tenants).where(eq(schema.tenants.id, tenantA));
-    await db.system.delete(schema.tenants).where(eq(schema.tenants.id, tenantB));
+    // Hard delete explícito (los datos de negocio tienen soft delete por trigger).
+    await db.system.transaction(async (tx) => {
+      const { sql } = await import('drizzle-orm');
+      await tx.execute(sql`select set_config('app.allow_hard_delete', 'on', true)`);
+      await tx.delete(schema.tenants).where(eq(schema.tenants.id, tenantA));
+      await tx.delete(schema.tenants).where(eq(schema.tenants.id, tenantB));
+    });
     await db.onModuleDestroy();
   });
 

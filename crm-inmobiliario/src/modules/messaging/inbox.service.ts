@@ -12,6 +12,7 @@ import {
   messages,
 } from '../../database/schema.js';
 import type { InboundMessage } from '../webhooks/normalizers.js';
+import { stageIdSql } from '../pipeline/pipeline.service.js';
 import { ChannelGateway } from './channel-gateway.service.js';
 
 export interface IngestResult {
@@ -110,7 +111,7 @@ export class InboxService {
           .values({ tenantId, contactId, channel: msg.channel, externalId: msg.contactExternalId, handle: msg.contactName })
           .onConflictDoNothing();
         if (!byPhone) {
-          await tx.insert(leads).values({ tenantId, contactId, sourceChannel: msg.channel });
+          await tx.insert(leads).values({ tenantId, contactId, sourceChannel: msg.channel, stageId: stageIdSql(tenantId) });
           await tx.insert(conversationMemory).values({ tenantId, contactId }).onConflictDoNothing();
         }
       }

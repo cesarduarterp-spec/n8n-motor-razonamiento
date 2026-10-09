@@ -6,7 +6,10 @@ export const Q = {
   INDEXES: 'index-ingestion',
   BILLING: 'billing',
   OUTBOUND: 'outbound',
+  MATCHING: 'matching',
 } as const;
+
+export type MatchingJob = { kind: 'lead'; tenantId: string; leadId: string } | { kind: 'property'; tenantId: string; propertyId: string };
 
 export type WebhookJob =
   | { provider: 'whatsapp' | 'meta'; payload: unknown; receivedAt: string }

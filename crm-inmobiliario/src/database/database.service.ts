@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
+import { RequestContext } from '../common/audit/request-context.js';
 import { env } from '../config/env.js';
 import * as schema from './schema.js';
 
@@ -24,14 +25,32 @@ export class DatabaseService implements OnModuleDestroy {
   readonly system: Db = drizzle(this.systemPool, { schema });
 
   /**
-   * Ejecuta `fn` en una transacción con `SET LOCAL app.tenant_id`. SET LOCAL
-   * muere con la transacción, así que no hay fuga de contexto entre requests
-   * que reutilizan la misma conexión del pool.
+   * Ejecuta `fn` en una transacción con el contexto de seguridad fijado por
+   * SET LOCAL (muere con la transacción: no hay fuga entre requests que
+   * reutilizan la conexión):
+   *   app.tenant_id        → RLS
+   *   app.actor_* / ip / … → actor que registran los triggers de auditoría
+   *   app.can_view_private → habilita la capa privada (solo admin/broker humanos)
+   *   app.include_deleted  → permite leer filas con soft delete (papelera/auditoría)
    */
-  async withTenant<T>(tenantId: string, fn: (tx: TenantTx) => Promise<T>): Promise<T> {
+  async withTenant<T>(
+    tenantId: string,
+    fn: (tx: TenantTx) => Promise<T>,
+    opts: { includeDeleted?: boolean } = {},
+  ): Promise<T> {
     if (!/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error('tenantId inválido');
+    const ctx = RequestContext.current();
     return this.app.transaction(async (tx) => {
-      await tx.execute(sql`select set_config('app.tenant_id', ${tenantId}, true)`);
+      await tx.execute(sql`select
+        set_config('app.tenant_id', ${tenantId}, true),
+        set_config('app.actor_type', ${ctx?.actorType ?? 'system'}, true),
+        set_config('app.user_id', ${ctx?.userId ?? ''}, true),
+        set_config('app.agent_id', ${ctx?.agentId ?? ''}, true),
+        set_config('app.ip', ${ctx?.ip ?? ''}, true),
+        set_config('app.user_agent', ${ctx?.userAgent ?? ''}, true),
+        set_config('app.request_id', ${ctx?.requestId ?? ''}, true),
+        set_config('app.can_view_private', ${RequestContext.canViewPrivate(ctx) ? 'on' : 'off'}, true),
+        set_config('app.include_deleted', ${opts.includeDeleted ? 'on' : 'off'}, true)`);
       return fn(tx);
     });
   }

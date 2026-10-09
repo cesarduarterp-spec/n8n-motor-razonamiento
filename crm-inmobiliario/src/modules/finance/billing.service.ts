@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Decimal } from 'decimal.js';
 import { and, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { DatabaseService, type TenantTx } from '../../database/database.service.js';
@@ -6,6 +6,7 @@ import {
   contractAdjustments,
   contracts,
   indexRates,
+  paymentReceipts,
   paymentSchedules,
   settlements,
   tenants,
@@ -192,6 +193,37 @@ export class BillingService {
           .onConflictDoNothing();
       }
       return rows.length;
+    });
+  }
+
+  /**
+   * Confirmación humana de un comprobante: imputa el monto a la cuota. Queda
+   * en el audit trail como PAYMENT_EXEC (cuota y comprobante, con old/new).
+   */
+  async confirmReceipt(tenantId: string, receiptId: string, userId: string, amountOverride?: number) {
+    return this.db.withTenant(tenantId, async (tx) => {
+      const [receipt] = await tx.select().from(paymentReceipts).where(eq(paymentReceipts.id, receiptId)).for('update');
+      if (!receipt) throw new NotFoundException('Comprobante inexistente');
+      if (receipt.verified) throw new ConflictException('El comprobante ya fue confirmado');
+      if (!receipt.scheduleId) throw new ConflictException('El comprobante no está imputado a ninguna cuota');
+      const amount = new Decimal(amountOverride ?? receipt.amount ?? 0);
+      if (amount.lte(0)) throw new ConflictException('Monto inválido');
+
+      const [s] = await tx.select().from(paymentSchedules).where(eq(paymentSchedules.id, receipt.scheduleId)).for('update');
+      if (!s) throw new NotFoundException('Cuota inexistente');
+      const paid = new Decimal(s.paidAmount).plus(amount);
+      const due = new Decimal(s.amount).plus(s.penaltyAmount);
+
+      await tx
+        .update(paymentReceipts)
+        .set({ verified: true, verifiedBy: userId, amount: amount.toFixed(2) })
+        .where(eq(paymentReceipts.id, receiptId));
+      const [updated] = await tx
+        .update(paymentSchedules)
+        .set({ paidAmount: paid.toFixed(2), status: paid.gte(due) ? 'paid' : 'partial', paidAt: new Date() })
+        .where(eq(paymentSchedules.id, s.id))
+        .returning();
+      return updated;
     });
   }
 

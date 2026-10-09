@@ -38,6 +38,10 @@ const EnvSchema = z.object({
   TIKTOK_CLIENT_SECRET: z.string().optional(),
   YOUTUBE_API_KEY: z.string().optional(),
 
+  // Google Calendar (booker de visitas): OAuth por asesor.
+  GOOGLE_OAUTH_CLIENT_ID: z.string().optional(),
+  GOOGLE_OAUTH_CLIENT_SECRET: z.string().optional(),
+
   // Fuentes de índices.
   BCRA_API_BASE: z.string().url().default('https://api.bcra.gob.ar/estadisticas/v3.0/monetarias'),
   BCRA_ICL_VARIABLE_ID: z.coerce.number().int().default(40),

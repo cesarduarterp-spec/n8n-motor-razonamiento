@@ -104,6 +104,8 @@ export class ContractExtractionService {
         model: response.model,
         task: 'contract_extraction',
         inputRef: documentId,
+        prompt: { system: SYSTEM_PROMPT, user: `[${mimeType} ${file.length} bytes] Extraé los datos estructurados de este contrato de locación.` },
+        rawResponse: { content: response.content, stop_reason: response.stop_reason },
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
         latencyMs: Date.now() - started,

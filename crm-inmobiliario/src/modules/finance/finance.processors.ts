@@ -1,6 +1,7 @@
 import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import type { Job, Queue } from 'bullmq';
+import { RequestContext } from '../../common/audit/request-context.js';
 import { type BillingJob, type IndexJob, Q } from '../../common/queue/queues.js';
 import { addMonths, firstOfMonth, todayIn } from './dates.js';
 import { BillingService } from './billing.service.js';
@@ -40,7 +41,11 @@ export class IndexProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<IndexJob>) {
+  process(job: Job<IndexJob>) {
+    return RequestContext.run({ actorType: 'system', agentId: 'index-ingestion' }, () => this.handle(job));
+  }
+
+  private async handle(job: Job<IndexJob>) {
     const n = job.data.kind === 'icl' ? await this.billingService.ingestIcl() : await this.billingService.ingestIpc();
     // Índices nuevos → recalcular cuotas provisionales de todos los tenants.
     if (n > 0) {
@@ -64,7 +69,11 @@ export class BillingProcessor extends WorkerHost {
     super();
   }
 
-  async process(job: Job<BillingJob>) {
+  process(job: Job<BillingJob>) {
+    return RequestContext.run({ actorType: 'system', agentId: 'billing' }, () => this.handle(job));
+  }
+
+  private async handle(job: Job<BillingJob>) {
     const data = job.data;
     switch (data.kind) {
       case 'fanout-daily': {

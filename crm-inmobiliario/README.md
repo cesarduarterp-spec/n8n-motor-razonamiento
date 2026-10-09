@@ -79,19 +79,73 @@ flowchart LR
 
 ## 2. Modelo de datos
 
-Esquema completo en [`src/database/schema.ts`](src/database/schema.ts); SQL generado en [`drizzle/0000_init.sql`](drizzle/0000_init.sql) y RLS/grants/triggers en [`drizzle/0001_rls.sql`](drizzle/0001_rls.sql).
+Esquema completo en [`src/database/schema.ts`](src/database/schema.ts). Migraciones en [`drizzle/`](drizzle/): `0000` tablas base, `0001` RLS, `0002` tablas Tokko/auditoría, **`0003` triggers zero-trust** (auditoría encadenada, soft delete, versionado, capa privada, pipeline por defecto, anti doble reserva), `0004` limpieza del modelo anterior y `0005` retención del log de IA.
 
 | Dominio | Tablas |
 |---|---|
 | Tenancy / RBAC | `tenants`, `tenant_secrets`, `users` (roles `admin`, `broker` (martillero), `sales_agent`, `back_office`), `channel_accounts` |
-| Cartera | `properties` (venta/alquiler/temporal, tags, metadata, `embedding vector(768)` con índice HNSW coseno) |
-| Contactos y omnicanal | `contacts`, `contact_identities`, `leads`, `conversations`, `messages`, `conversation_memory`, `agent_drafts`, `agent_runs` |
+| Cartera | `properties` (venta/alquiler/temporal, multimedia/360°, ubicación exacta restringida, `embedding vector(768)` HNSW) |
+| Emprendimientos | `developments` (edificio, loteo, condominio, barrio cerrado; estado de obra), `property_units` (1:1 con `properties`), `price_lists` + `price_list_items` |
+| **Capa privada** | `listing_private_data` (propietario, comisión, exclusividad, llaves, notas internas, tasación de origen) — RLS restrictiva |
+| Pipeline comercial | `pipeline_stages` (Kanban por tenant), `leads.stage_id`, `assignment_rules`, `assignment_state`, `lead_requirements` (vectorizado), `property_matches`, `visits` |
+| Contactos y omnicanal | `contacts`, `contact_identities`, `leads`, `conversations`, `messages`, `conversation_memory`, `agent_drafts` |
+| **Auditoría (append-only)** | `audit_logs` (cadena de hashes por tenant), `audit_chain_heads`, `ai_decision_logs` |
 | Contratos y finanzas | `contracts`, `contract_parties`, `contract_documents`, `contract_adjustments`, `payment_schedules`, `payment_receipts`, `settlements` |
 | Global (sin RLS) | `index_rates` (ICL diario BCRA, IPC mensual INDEC) — solo lectura para la API |
 
 ---
 
-## 3. Módulos
+## 3. Respaldo, auditoría y trazabilidad (zero-trust)
+
+```mermaid
+flowchart LR
+  REQ["Request HTTP<br/>JWT → user, rol, IP, UA"] --> ALS["AsyncLocalStorage<br/>(AuditContextInterceptor)"]
+  JOB["Job BullMQ<br/>agent:gemini-frontline · claude-specialist · booker · matcher<br/>system:billing · ingest-*"] --> ALS
+  ALS --> TX["withTenant(): SET LOCAL<br/>app.tenant_id · app.actor_* · app.ip · app.user_agent<br/>app.request_id · app.can_view_private"]
+  TX --> T["Triggers de PostgreSQL<br/>(SECURITY DEFINER)"]
+  T --> AL[("audit_logs<br/>old_state / new_state<br/>hash encadenado")]
+  T --> SD["DELETE → soft delete<br/>UPDATE → version + 1"]
+  AI["Gemini / Claude / router"] --> AIL[("ai_decision_logs<br/>prompt · tools · respuesta cruda<br/>tokens · motivo de ruteo")] --> AL
+  PG[(PostgreSQL)] -- "archive_command (WAL, 60 s)" --> S3[("S3 / GCS<br/>cifrado libsodium + SSE-KMS<br/>Object Lock")]
+  BK["pg-backup<br/>base backup diario (delta)"] --> S3
+```
+
+**Por qué triggers y no solo un interceptor:** un interceptor HTTP no ve las escrituras de los workers, los bulk updates ni el SQL manual, y no conoce el estado previo de la fila. Acá el interceptor solo *declara quién actúa* (usuario, agente IA o proceso, IP, user-agent, request id) y la base registra **toda** mutación con snapshots completos; ningún servicio tiene que "acordarse" de loguear.
+
+| Garantía | Implementación |
+|---|---|
+| Acciones | `CREATE`, `UPDATE`, `DELETE`, `RESTORE`, `PAYMENT_EXEC` (cuota pagada o comprobante confirmado), `AI_INTERACTION`, más `PRIVATE_ACCESS` y `EXPORT` (lectura de capa privada y exportación de fichas). |
+| Snapshots | `old_state`/`new_state` JSONB completos + `changed_fields`; se excluyen embeddings, ciphertexts y hashes de contraseña. Timestamps RFC3339 UTC en la API. |
+| Inmutabilidad | `REVOKE` de INSERT/UPDATE/DELETE/TRUNCATE para los roles de la app, triggers que rechazan UPDATE/DELETE/TRUNCATE incluso al dueño, y **cadena de hashes SHA-256 por tenant** (`POST /audit/verify`): si alguien con superusuario desactiva los triggers y edita una fila, la verificación devuelve la primera entrada rota. Para inmutabilidad real fuera de la base, los backups van a un bucket con Object Lock. |
+| Soft delete + versión | Contratos, propiedades, desarrollos, unidades, pagos, comprobantes, leads, contactos, mensajes y visitas: el `DELETE` se convierte en `deleted_at`/`deleted_by`; una política RLS oculta los borrados (papelera en `/audit/trash/:entity`, restauración auditada). `version` sube en cada cambio y habilita concurrencia optimista (409 en el Kanban). La baja definitiva (tenant offboarding, Ley 25.326) exige `SET LOCAL app.allow_hard_delete = on` con rol system. |
+| Trazabilidad IA | Cada llamada (clasificación, transcripción, comprobantes, conversación con tools, especialista, extracción de contratos, decisión del router) queda en `ai_decision_logs` con prompt (binarios redactados), tools invocadas con args/resultado, respuesta cruda, tokens, latencia y motivo de ruteo. *Fail-closed*: si no se puede registrar, la operación falla y el job se reintenta. |
+| Backups | WAL-G: archivado continuo de WAL (RPO ≈ 60 s) + base backup diario incremental (delta) a **S3 o GCS**, cifrado del lado del cliente obligatorio (los scripts se niegan a subir sin clave), retención configurable, `verify-restore.sh` (restaura y verifica la cadena de auditoría) y runbook de PITR en [`docker/postgres/backup/restore-pitr.md`](docker/postgres/backup/restore-pitr.md). |
+
+---
+
+## 4. Módulos Tokko-style
+
+### Emprendimientos e inventario multinivel
+- `developments` → `property_units` → `properties`: cada unidad comercializable es un inmueble más, así búsqueda, matching, fichas y agente funcionan igual para usados y emprendimientos.
+- Listas de precios con vigencia, regla de ajuste (p. ej. CAC) y planes de financiación; al publicarse una lista vigente se actualiza el precio de cada unidad (auditado).
+- **Capa pública vs. privada**: los datos sensibles viven en `listing_private_data`, protegida por RBAC (solo admin/broker) **y** por una política RLS restrictiva que exige `app.can_view_private = on`. Ese flag solo lo setea `withTenant` para usuarios humanos admin/broker, así que el agente IA, las fichas, el matching y los asesores comerciales no pueden leerla aunque el código lo intente (verificado en tests). Cada lectura queda como `PRIVATE_ACCESS`.
+
+### Fichas
+- `GET /properties/:id/ficha?variant=public|neutral&format=html|pdf|json` (también `/developments/:id/ficha`, con tabla de unidades disponibles y precio "desde").
+- **Pública**: branding del tenant (logo, color, teléfono, email, web), código interno, dirección exacta solo si `show_exact_address`.
+- **Neutra / marca blanca**: sin marca ni contacto del broker, referencia neutra `N-XXXXXXXX`, sin dirección exacta (ubicación aproximada ~1 km) y con teléfonos, emails, URLs y @usuarios eliminados del texto libre (conservando montos como `USD 1.250.000`).
+- `POST /…/ficha-links?variant=neutral&days=30` genera un **link firmado** (JWT con tenant, entidad y variante fijos) para compartir sin login. Cada exportación queda como `EXPORT`.
+- Construcción por lista blanca de campos; HTML sin JS con todo escapado y CSP estricta; PDF con `pdfkit` (imágenes solo https públicas, sin redirects).
+
+### Pipeline, round-robin, smart matching y booker
+- **Kanban configurable** (`/pipeline`): 8 etapas sembradas por trigger al crear el tenant (Nuevo lead → Calificado → Visita coordinada → Tasación → Negociación → Reserva → Cierre / Perdido), SLA por etapa, reordenables. `PATCH /leads/:id/stage` con `expectedVersion` → 409 ante cambios concurrentes. Los agentes solo pueden **avanzar** etapas, nunca retroceder ni reabrir un cierre.
+- **Round-robin equitativo**: reglas por prioridad (zona, tipo, operación, canal; ignoran tildes/mayúsculas) o pool general; elige al asesor con menos leads abiertos y, a igualdad, al que hace más que no recibe. Advisory lock por tenant para que el reparto sea justo bajo concurrencia.
+- **Smart matching**: `lead_requirements` (filtros + lenguaje natural) vectorizado con Gemini embeddings (`RETRIEVAL_QUERY` vs `RETRIEVAL_DOCUMENT`), cruzado en pgvector y puntuado `0,6 × semántico + 0,4 × ajuste estructurado` con motivos legibles. Funciona en los dos sentidos: lead → propiedades y propiedad nueva → leads interesados (job automático al dar de alta un inmueble). El orquestador actualiza los requerimientos en cada conversación comercial.
+- **Booker agéntico**: el bot ofrece horarios con `get_visit_slots` y reserva con `book_visit`. La disponibilidad combina Google Calendar del asesor (OAuth por asesor: `/integrations/google/connect`) y visitas ya agendadas; reserva atómica con restricción `EXCLUDE USING gist` que impide dos visitas superpuestas del mismo asesor; si Google falla, la visita se cancela. Sin Google conectado funciona con la agenda interna.
+
+---
+
+## 5. Módulos
 
 | Módulo | Archivos principales |
 |---|---|
@@ -101,6 +155,13 @@ Esquema completo en [`src/database/schema.ts`](src/database/schema.ts); SQL gene
 | Webhooks y gateway omnicanal | `src/modules/webhooks/*`, `src/modules/messaging/*` |
 | Agente híbrido | `src/modules/agents/orchestrator.ts`, `router.ts`, `gemini-frontline.service.ts`, `claude-specialist.service.ts`, `memory.service.ts` |
 | Búsqueda semántica | `src/modules/properties/properties.service.ts` |
+| Auditoría | `drizzle/0003_audit_zero_trust.sql`, `src/common/audit/request-context.ts`, `src/modules/audit/audit.controller.ts` |
+| Emprendimientos y capa privada | `src/modules/developments/*` |
+| Fichas | `src/modules/fichas/public-listing.ts`, `render.ts`, `fichas.service.ts` |
+| Pipeline y asignación | `src/modules/pipeline/assignment.ts`, `pipeline.service.ts` |
+| Smart matching | `src/modules/matching/scoring.ts`, `matching.service.ts` |
+| Booker | `src/modules/booking/slots.ts`, `google-calendar.client.ts`, `booking.service.ts` |
+| Backups | `docker/postgres/Dockerfile`, `docker/postgres/backup/*` |
 
 ### Fórmulas
 
@@ -122,18 +183,32 @@ Esquema completo en [`src/database/schema.ts`](src/database/schema.ts); SQL gene
 | GET | `/finance/contracts/:id/projection?inflation=2.5` · `/finance/due` | admin, broker, back_office |
 | POST / GET | `/properties` · `/properties/search?q=…` | — |
 | GET / POST | `/agent-drafts` · `/:id/approve` · `/:id/reject` · `/late-notice/:contractId` | admin, broker (+ back_office lectura) |
+| POST | `/finance/receipts/:id/confirm` (→ `PAYMENT_EXEC`) | admin, back_office |
+| GET / POST | `/developments` · `/developments/:id` · `/developments/:id/units` · `/developments/:id/price-lists` · `PATCH /units/:id/status` | admin, broker (alta) |
+| GET / PUT | `/properties/:id/private` · `/developments/:id/private` | admin, broker |
+| GET / POST | `/{properties,developments}/:id/ficha` · `/{properties,developments}/:id/ficha-links` | autenticado |
+| GET | `/public/fichas/:token?format=html\|pdf\|json` | público (link firmado) |
+| GET / POST / PATCH | `/pipeline` · `/pipeline/stages` · `/pipeline/stages/order` · `/leads` · `/leads/:id/stage` · `/leads/:id/assign` · `/leads/:id/assignee` · `/assignment-rules` | según acción |
+| PATCH / POST / GET | `/leads/:id/requirements` · `/leads/:id/matches` · `/matches/:id` · `/properties/:id/matching-leads` | autenticado |
+| GET / POST | `/visits/slots` · `/visits` · `/visits/:id/cancel` · `/integrations/google/connect` · `/integrations/google/callback` | asesores |
+| GET / POST | `/audit/entities/:entity/:id` · `/audit/logs` · `/audit/verify` · `/audit/ai/conversations/:id` · `/audit/trash/:entity` · `/audit/trash/:entity/:id/restore` | admin |
 
 ---
 
-## 4. Ejecución
+## 6. Ejecución
 
 ```bash
 cp .env.example .env            # completar secretos
 docker compose up -d --build    # postgres + redis + migrate + api + worker
 docker compose run --rm -e SEED_ADMIN_PASSWORD='...' -e SEED_WA_PHONE_NUMBER_ID=... -e SEED_WA_TOKEN=... api node dist/database/seed.js
+
+# Backups cifrados a S3/GCS (WAL-G)
+cp backup.env.example backup.env   # bucket, credenciales y WALG_LIBSODIUM_KEY
+docker compose --profile backup up -d
+docker compose run --rm pg-backup verify-restore.sh   # prueba de restauración
 ```
 
-Desarrollo local: `npm ci && npm run dev:api` y `npm run dev:worker` en otra terminal. Tests: `npm test` (los de RLS corren si `DATABASE_URL` y `DATABASE_SYSTEM_URL` están definidas).
+Desarrollo local: `npm ci && npm run dev:api` y `npm run dev:worker` en otra terminal. Tests: `npm test` (los de integración corren si `DATABASE_URL`, `DATABASE_SYSTEM_URL` y `DATABASE_OWNER_URL` están definidas).
 
 Configurar en Meta el webhook `https://<PUBLIC_BASE_URL>/webhooks/meta` con `META_VERIFY_TOKEN`, suscribiendo `messages` (WhatsApp), `messages` (Messenger/Instagram) y `comments`/`feed` según el canal.
 
@@ -149,13 +224,16 @@ Ver [`.env.example`](.env.example). Se validan al arrancar ([`src/config/env.ts`
 - **Storage**: el volumen `uploads` debe ser compartido entre API y workers; en Kubernetes conviene reemplazar `StorageService` por S3/GCS (la interfaz `put/get` ya está aislada).
 - Las migraciones corren como job one-shot (`migrate`) antes de API/worker.
 - TLS terminado en el ingress/reverse proxy; los webhooks de Meta exigen HTTPS válido.
-- Observabilidad: `agent_runs` registra modelo, tokens, latencia y resultado de cada llamada LLM por tenant (base para costos por inmobiliaria).
+- Observabilidad: `ai_decision_logs` registra modelo, tokens, latencia y resultado de cada llamada LLM por tenant (base para costos por inmobiliaria). Contiene prompts con datos personales: definir retención y acceso (solo admin).
+- `TRUST_PROXY_HOPS` debe coincidir con la cantidad de proxies delante de la API para que la IP auditada sea la real.
 
 ---
 
-## 5. Estado de la verificación
+## 7. Estado de la verificación
 
-- `tsc` sin errores; **25 tests** (motor ICL/IPC, punitorios, liquidación, firmas, normalizadores, router, validaciones y RLS contra Postgres 16 + pgvector real).
-- Probado en local: migraciones, seed, login JWT, RBAC, verificación de webhook, rechazo por firma inválida, deduplicación de reintentos y flujo webhook → worker → contacto/lead/mensaje → turno del agente (hasta la llamada a Gemini).
-- **No verificado en vivo**: llamadas reales a Claude/Gemini (sin API keys en el entorno de desarrollo), APIs de BCRA/INDEC (hosts bloqueados por la red del sandbox; el parser tolera los formatos v2 y v3 del BCRA) y el `docker build` (sin daemon; `docker compose config` valida).
-- Pendientes razonables: coeficiente **Casa Propia** (el enum existe, el cálculo lanza error explícito), respuesta automática a comentarios de TikTok/YouTube (requiere OAuth del creador; hoy se derivan a humano), envío de plantillas de WhatsApp desde la UI, y rotación de `MASTER_ENCRYPTION_KEY`.
+- `tsc` sin errores; **46 tests**: unitarios (motor ICL/IPC, punitorios, liquidación, firmas, normalizadores, router, round-robin, scoring, turnos, ficha neutra, escape HTML) e integración contra **Postgres 16 + pgvector real** (RLS entre tenants; auditoría con actor/IP/UA y snapshots; soft delete y restore; versionado; inmutabilidad para app, sistema y dueño; detección de manipulación de la cadena de hashes; capa privada invisible para agentes IA y asesores; `AI_INTERACTION`; pipeline por defecto, avance solo hacia adelante y reparto 2/1; `PAYMENT_EXEC`; rechazo de visitas superpuestas).
+- Migraciones `0000`→`0005` aplicadas desde cero y también sobre una base con datos (backfill de etapas y de `agent_runs`).
+- Smoke test con API + worker reales: lead manual con asignación round-robin, Kanban (asesora ve solo lo suyo), 409 por versión vieja, fichas pública/neutra en HTML y PDF, link firmado y token adulterado (404), capa privada (403 para asesora + `PRIVATE_ACCESS`), `EXPORT` en el trail, `audit/verify` íntegro y reserva de visita sin Google (segunda reserva del mismo horario → 409, lead pasa a "Visita coordinada").
+- Scripts de backup probados con un `wal-g` simulado (rechazan subir sin cifrado; en producción retienen el WAL si el destino no está configurado).
+- **No verificado en vivo**: Claude/Gemini (sin API keys reales; las llamadas llegan a la API y fallan por la key), Google Calendar OAuth, BCRA/INDEC (hosts bloqueados en el sandbox), el `docker build` (sin daemon; `docker compose config` valida) y la descarga de WAL-G: **verificar `WALG_VERSION`/`WALG_ASSET`** contra los releases oficiales antes de construir la imagen de Postgres.
+- Pendientes razonables: coeficiente **Casa Propia**, respuesta automática a comentarios de TikTok/YouTube (requiere OAuth del creador), plantillas de WhatsApp desde la UI, rotación de `MASTER_ENCRYPTION_KEY`, y exportación periódica de `audit_logs` a almacenamiento WORM independiente.

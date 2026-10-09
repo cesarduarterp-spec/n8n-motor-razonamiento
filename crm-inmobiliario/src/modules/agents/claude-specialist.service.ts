@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { Injectable } from '@nestjs/common';
 import { env } from '../../config/env.js';
-import { LlmClients } from './llm-clients.js';
+import { type AiTrace, LlmClients } from './llm-clients.js';
 import { type Intent, SpecialistDecision } from './agent.schemas.js';
 
 const SYSTEM_PROMPT = `Sos el especialista legal-contractual de una inmobiliaria argentina. Intervenís cuando un inquilino,
@@ -35,6 +35,7 @@ export interface SpecialistInput {
   transcript: string;
   latestMessage: string;
   contractContext: string; // contratos, cronograma, ajustes y mora en JSON
+  trace?: AiTrace;
 }
 
 @Injectable()
@@ -64,7 +65,7 @@ ${input.transcript}
 ${input.latestMessage}
 </mensaje_contacto>`;
 
-    return this.run(input.tenantId, 'specialist_decision', userContent);
+    return this.run(input.tenantId, 'specialist_decision', userContent, input.trace);
   }
 
   /** Aviso formal de mora para un contrato (lo dispara back-office o el cron de mora). */
@@ -82,7 +83,7 @@ ${contractContext}
     );
   }
 
-  private async run(tenantId: string, task: string, userContent: string): Promise<SpecialistDecision> {
+  private async run(tenantId: string, task: string, userContent: string, trace?: AiTrace): Promise<SpecialistDecision> {
     const client = await this.llm.claude(tenantId);
     const model = env().CLAUDE_MODEL;
     const started = Date.now();
@@ -103,6 +104,11 @@ ${contractContext}
         engine: 'claude',
         model: response.model,
         task,
+        conversationId: trace?.conversationId,
+        messageId: trace?.messageId,
+        routingReason: trace?.routingReason,
+        prompt: { system: SYSTEM_PROMPT, user: userContent },
+        rawResponse: { content: response.content, stop_reason: response.stop_reason, stop_details: response.stop_details },
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
         latencyMs: Date.now() - started,
@@ -118,6 +124,9 @@ ${contractContext}
           engine: 'claude',
           model,
           task,
+          conversationId: trace?.conversationId,
+          routingReason: trace?.routingReason,
+          prompt: { system: SYSTEM_PROMPT, user: userContent },
           latencyMs: Date.now() - started,
           outcome: 'error',
           detail: { status: err.status, message: err.message },
