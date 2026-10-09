@@ -55,6 +55,38 @@ export class PropertiesService {
     return row;
   }
 
+  list(tenantId: string, f: { operation?: string; status?: string }) {
+    return this.db.withTenant(tenantId, (tx) =>
+      tx
+        .select({
+          id: properties.id,
+          code: properties.code,
+          title: properties.title,
+          operation: properties.operation,
+          status: properties.status,
+          propertyType: properties.propertyType,
+          neighborhood: properties.neighborhood,
+          city: properties.city,
+          price: properties.price,
+          currency: properties.currency,
+          bedrooms: properties.bedrooms,
+          coveredM2: properties.coveredM2,
+          media: properties.media,
+          developmentId: properties.developmentId,
+          updatedAt: properties.updatedAt,
+        })
+        .from(properties)
+        .where(
+          and(
+            f.operation ? eq(properties.operation, f.operation as 'sale' | 'rent' | 'temporary_rent') : undefined,
+            f.status ? eq(properties.status, f.status as 'available') : undefined,
+          ),
+        )
+        .orderBy(sql`${properties.updatedAt} desc`)
+        .limit(200),
+    );
+  }
+
   /**
    * Búsqueda híbrida: filtros estructurados (SQL) + ranking semántico
    * (distancia coseno pgvector). RLS garantiza que solo se vea el catálogo del tenant.

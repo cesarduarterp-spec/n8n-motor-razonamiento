@@ -60,6 +60,12 @@ export class PropertiesController {
     });
   }
 
+  /** Listado de la cartera (capa pública) para el panel. */
+  @Get()
+  list(@CurrentUser() user: AuthUser, @Query('operation') operation?: string, @Query('status') status?: string) {
+    return this.properties.list(user.tenantId, { operation, status });
+  }
+
   /** GET /properties/search?q=depto 2 ambientes con balcón cerca del subte&operation=rent&maxPrice=600000 */
   @Get('search')
   search(

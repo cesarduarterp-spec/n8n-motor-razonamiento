@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { env } from '../../config/env.js';
 import { TenantSecretsService } from '../tenants/tenant-secrets.service.js';
 
@@ -48,6 +49,9 @@ export class ChannelGateway {
         });
         return res.message_id;
       }
+      case 'web':
+        // Canal web / simulador del panel: no hay plataforma externa, el panel lee el mensaje de la base.
+        return `web-${randomUUID()}`;
       default:
         // TikTok / YouTube: responder comentarios requiere OAuth del creador y scopes específicos;
         // se deriva a un humano en lugar de enviar.

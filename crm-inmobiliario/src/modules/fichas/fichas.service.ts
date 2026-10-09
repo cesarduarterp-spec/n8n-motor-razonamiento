@@ -73,7 +73,7 @@ export class FichasService {
     if (variant === 'neutral') return undefined; // marca blanca: sin logo, nombre ni contacto del broker
     const [t] = await tx.select({ name: tenants.name, settings: tenants.settings }).from(tenants).where(eq(tenants.id, tenantId));
     const b = t?.settings.branding ?? {};
-    return { agencyName: t?.name ?? '', primaryColor: b.primaryColor ?? '#1f3a5f', logoUrl: b.logoUrl, phone: b.phone, email: b.email, website: b.website, address: b.address };
+    return { agencyName: t?.name ?? '', primaryColor: b.primaryColor ?? '#0a0a0b', logoUrl: b.logoUrl, phone: b.phone, email: b.email, website: b.website, address: b.address };
   }
 
   private async buildProperty(tx: TenantTx, t: FichaTarget): Promise<PublicListing> {
@@ -91,8 +91,8 @@ export class FichasService {
     if (p.rooms) specs.push(['Ambientes', String(p.rooms)]);
     if (p.bedrooms) specs.push(['Dormitorios', String(p.bedrooms)]);
     if (p.bathrooms) specs.push(['Baños', String(p.bathrooms)]);
-    if (p.coveredM2) specs.push(['Sup. cubierta', `${p.coveredM2} m²`]);
-    if (p.totalM2) specs.push(['Sup. total', `${p.totalM2} m²`]);
+    if (p.coveredM2) specs.push(['Sup. cubierta', `${Number(p.coveredM2)} m²`]);
+    if (p.totalM2) specs.push(['Sup. total', `${Number(p.totalM2)} m²`]);
     if (unit) {
       specs.push(['Unidad', unit.unit.unitCode], ['Tipología', unit.unit.typology]);
       if (unit.unit.floor != null) specs.push(['Piso', String(unit.unit.floor)]);

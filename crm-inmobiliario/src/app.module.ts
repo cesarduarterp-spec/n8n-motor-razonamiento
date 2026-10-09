@@ -1,5 +1,5 @@
 import { BullModule } from '@nestjs/bullmq';
-import { Controller, Get, Module } from '@nestjs/common';
+import { Controller, Get, Module, Redirect } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuditContextInterceptor } from './common/audit/request-context.js';
 import { AuthGuard, Public } from './common/auth/auth.js';
@@ -13,6 +13,7 @@ import { BookingModule } from './modules/booking/booking.module.js';
 import { DevelopmentsModule } from './modules/developments/developments.module.js';
 import { FichasModule } from './modules/fichas/fichas.module.js';
 import { MatchingWorkerModule } from './modules/matching/matching.module.js';
+import { PanelModule } from './modules/panel/panel.module.js';
 import { PipelineModule } from './modules/pipeline/pipeline.module.js';
 import { ContractsModule, ContractsWorkerModule } from './modules/contracts/contracts.module.js';
 import { FinanceModule, FinanceWorkerModule } from './modules/finance/finance.module.js';
@@ -26,13 +27,19 @@ const queueRoot = BullModule.forRoot({
   defaultJobOptions,
 });
 
-@Controller('health')
+@Controller()
 class HealthController {
   @Public()
-  @Get()
+  @Get('health')
   ok() {
     return { status: 'ok' };
   }
+
+  /** La raíz lleva al panel web. */
+  @Public()
+  @Get()
+  @Redirect('/panel/', 302)
+  root() {}
 }
 
 /** Proceso API (HTTP): controladores + productores de colas. Sin processors. */
@@ -50,6 +57,7 @@ class HealthController {
     PipelineModule,
     BookingModule,
     AuditModule,
+    PanelModule,
   ],
   controllers: [HealthController, AuthController],
   providers: [

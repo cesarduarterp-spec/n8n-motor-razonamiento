@@ -15,7 +15,7 @@ Esta guía levanta el CRM completo en **tu Docker local** (o en un servidor grat
 
 > ⚠️ **Datos de prueba, no de clientes reales.** En el plan gratuito de Gemini, Google puede usar el contenido de las consultas para mejorar sus productos. Para datos reales hay que pasar a un plan pago.
 
-> El proyecto es el **backend (API)**: todavía no tiene pantallas. Se prueba con `curl`, Postman o Insomnia, y con WhatsApp.
+> Incluye un **panel web** (negro, blanco y verde) en <http://localhost:3000>: inicio con indicadores, **simulador de chat** para probar el asistente sin WhatsApp, pipeline Kanban, propiedades con fichas, agenda y aprobaciones.
 
 ---
 
@@ -53,32 +53,32 @@ docker compose -f docker-compose.yml -f docker-compose.prueba.yml run --rm \
 
 Para no repetir el `-f … -f …`, se puede crear un alias: `alias dc='docker compose -f docker-compose.yml -f docker-compose.prueba.yml'`.
 
-## 4. Probar la API
+## 4. Probar desde el panel
+
+Abrí **<http://localhost:3000>** e ingresá con la inmobiliaria `demo`, tu email y contraseña.
+
+| Sección | Qué probar |
+|---|---|
+| **Inicio** | Leads por etapa, próximas visitas, aprobaciones pendientes, uso de IA del día y actividad reciente. |
+| **Simulador de chat** | Escribí como si fueras un cliente (o usá los ejemplos). A la derecha ves *qué pensó el asistente*: intención detectada, si lo atendió Gemini, el especialista o una persona, por qué, y qué herramientas usó (buscar propiedades, ver horarios, reservar). Cada chat nuevo crea un contacto y un lead que aparecen en el pipeline. |
+| **Pipeline** | Arrastrá las tarjetas entre etapas (o tocá una tarjeta para moverla desde el detalle, cómodo en el celular). *Nuevo lead* lo asigna solo por round-robin. |
+| **Propiedades** | Cargá inmuebles, buscá en lenguaje natural (“depto luminoso cerca del subte que acepte mascotas”) y generá la **ficha pública** o la **ficha neutra** (web o PDF) con un link para compartir. *Interesados* muestra los leads afines. |
+| **Agenda** | Visitas agendadas por el asistente, bloqueos de horario y el link para verlas en el celular. |
+| **Aprobaciones** | Lo que el especialista legal redacta con riesgo espera tu OK; podés editar el texto antes de aprobar. |
+
+> Para que el asistente responda hace falta `GEMINI_API_KEY` válida y el contenedor `worker` corriendo. Si algo falla, el simulador muestra el motivo en rojo.
+
+<details>
+<summary>Probar por API (curl), opcional</summary>
 
 ```bash
-# Login
 TOKEN=$(curl -s -X POST localhost:3000/auth/login -H 'content-type: application/json' \
   -d '{"tenant":"demo","email":"admin@demo.com","password":"UnaClaveLarga123"}' | jq -r .accessToken)
-
-# Cargar una propiedad (Gemini genera su "huella semántica" para la búsqueda inteligente)
-curl -s -X POST localhost:3000/properties -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
-  "code":"PAL-101","title":"2 ambientes luminoso con balcón","operation":"rent","propertyType":"departamento",
-  "neighborhood":"Palermo","city":"CABA","price":550000,"bedrooms":1,"coveredM2":45,
-  "description":"Al frente, a 3 cuadras del subte D, apto mascotas"}'
-
-# Búsqueda en lenguaje natural
-curl -s "localhost:3000/properties/search?q=depto%20chico%20cerca%20del%20subte%20que%20acepte%20perro" -H "authorization: Bearer $TOKEN"
-
-# Lead manual con requerimientos → asignación automática + matching
-curl -s -X POST localhost:3000/leads -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
-  "fullName":"Carla","phoneE164":"+5491155550000",
-  "requirements":{"operation":"rent","neighborhoods":["Palermo"],"maxPrice":600000,"naturalLanguage":"tengo un perro, quiero balcón"}}'
-
-curl -s localhost:3000/pipeline -H "authorization: Bearer $TOKEN"            # tablero Kanban
-curl -s -X POST localhost:3000/audit/verify -H "authorization: Bearer $TOKEN"  # integridad del audit trail
+curl -s localhost:3000/pipeline -H "authorization: Bearer $TOKEN"
+curl -s -X POST localhost:3000/audit/verify -H "authorization: Bearer $TOKEN"
 ```
-
-Fichas: `GET /properties/<id>/ficha?variant=public&format=pdf` (o `variant=neutral`). El listado completo de endpoints está en el [README](README.md#endpoints).
+El listado completo de endpoints está en el [README](README.md#endpoints).
+</details>
 
 ## 5. Agenda de visitas (sin Google)
 

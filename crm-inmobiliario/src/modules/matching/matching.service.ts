@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { and, cosineDistance, eq, isNotNull, sql } from 'drizzle-orm';
+import { and, cosineDistance, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { DatabaseService, type TenantTx } from '../../database/database.service.js';
-import { leadRequirements, leads, pipelineStages, properties, propertyMatches } from '../../database/schema.js';
+import { contacts, leadRequirements, leads, pipelineStages, properties, propertyMatches } from '../../database/schema.js';
 import { GeminiFrontline } from '../agents/gemini-frontline.service.js';
 import { type Requirements, requirementsText, scoreMatch } from './scoring.js';
 
@@ -167,7 +167,15 @@ export class MatchingService {
         .slice(0, limit);
 
       await this.persist(tx, tenantId, scored.map((m) => ({ leadId: m.leadId, propertyId, score: m.score, semantic: m.semantic, reasons: m.reasons })));
-      return scored;
+      const names = scored.length
+        ? await tx
+            .select({ leadId: leads.id, name: contacts.fullName, phone: contacts.phoneE164 })
+            .from(leads)
+            .innerJoin(contacts, eq(contacts.id, leads.contactId))
+            .where(inArray(leads.id, scored.map((m) => m.leadId)))
+        : [];
+      const byLead = new Map(names.map((x) => [x.leadId, x]));
+      return scored.map((m) => ({ ...m, contactName: byLead.get(m.leadId)?.name ?? null, phone: byLead.get(m.leadId)?.phone ?? null }));
     });
   }
 

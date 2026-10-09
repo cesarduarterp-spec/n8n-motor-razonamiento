@@ -12,25 +12,25 @@ const safeUrl = (u: string) => (/^https:\/\//i.test(u) ? u : '');
 
 /** HTML autocontenido (sin JS) apto para compartir o imprimir. Todo valor se escapa. */
 export function renderHtml(l: PublicListing): string {
-  const color = /^#[0-9a-f]{6}$/i.test(l.branding?.primaryColor ?? '') ? l.branding!.primaryColor : '#1f3a5f';
+  const color = /^#[0-9a-f]{6}$/i.test(l.branding?.primaryColor ?? '') ? l.branding!.primaryColor : '#0a0a0b';
   const photos = l.photos.map(safeUrl).filter(Boolean);
   return `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${esc(l.title)}</title>
 <style>
-  :root{--brand:${color};--ink:#1d2430;--muted:#5b6575;--line:#e3e7ee;--bg:#fff}
+  :root{--brand:${color};--accent:#00a85f;--ink:#1d2430;--muted:#5b6575;--line:#e3e7ee;--bg:#fff}
   @media (prefers-color-scheme:dark){:root{--ink:#e8ecf2;--muted:#a6b0bf;--line:#2b3340;--bg:#12161c}}
   *{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);background:var(--bg)}
   header{background:var(--brand);color:#fff;padding:16px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
   header img{max-height:44px}main{max-width:960px;margin:0 auto;padding:16px}
-  h1{font-size:1.6rem;margin:.2em 0}.price{font-size:1.5rem;font-weight:700;color:var(--brand)}
+  h1{font-size:1.6rem;margin:.2em 0}.price{font-size:1.5rem;font-weight:700;color:var(--accent)}
   .meta{color:var(--muted)}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin:16px 0}
   .gallery img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px}
   table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:8px;text-align:left}
   .chips span{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:2px 10px;margin:2px;font-size:.9rem}
   footer{border-top:1px solid var(--line);margin-top:24px;padding:16px;color:var(--muted);font-size:.85rem}
-  a{color:var(--brand)}
+  a{color:var(--accent)}
 </style></head><body>
 <header>
   <div>${l.branding?.logoUrl && safeUrl(l.branding.logoUrl) ? `<img src="${esc(l.branding.logoUrl)}" alt="${esc(l.branding.agencyName)}">` : `<strong>${esc(l.branding?.agencyName ?? 'Ficha de propiedad')}</strong>`}</div>
@@ -70,7 +70,7 @@ async function fetchImage(url: string): Promise<Buffer | undefined> {
 
 /** PDF descargable (A4) con la misma información que el HTML. */
 export async function renderPdf(l: PublicListing): Promise<Buffer> {
-  const color = /^#[0-9a-f]{6}$/i.test(l.branding?.primaryColor ?? '') ? l.branding!.primaryColor : '#1f3a5f';
+  const color = /^#[0-9a-f]{6}$/i.test(l.branding?.primaryColor ?? '') ? l.branding!.primaryColor : '#0a0a0b';
   const [logo, ...photos] = await Promise.all([
     l.branding?.logoUrl ? fetchImage(l.branding.logoUrl) : Promise.resolve(undefined),
     ...l.photos.slice(0, 4).map(fetchImage),

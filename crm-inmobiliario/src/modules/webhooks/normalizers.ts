@@ -2,7 +2,7 @@
  * Normalización de payloads heterogéneos a un único modelo de mensaje
  * entrante. Funciones puras: fáciles de testear con fixtures reales.
  */
-export type Channel = 'whatsapp' | 'instagram' | 'messenger' | 'tiktok' | 'youtube';
+export type Channel = 'whatsapp' | 'instagram' | 'messenger' | 'tiktok' | 'youtube' | 'web';
 
 export interface InboundMessage {
   channel: Channel;

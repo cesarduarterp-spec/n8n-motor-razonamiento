@@ -197,6 +197,15 @@ flowchart LR
 
 ---
 
+## Panel web
+
+`http://localhost:3000` (redirige a `/panel/`): panel de gestión en negro, blanco y verde, servido por la misma API sin build ni dependencias (HTML + CSS + JS nativo, módulos ES). Secciones: **Inicio** (KPIs, leads por etapa, próximas visitas, uso de IA, actividad auditada), **Simulador de chat** (prueba el agente completo por el canal `web`, con el razonamiento de cada turno: intención, motor, motivo y herramientas), **Pipeline** (Kanban con arrastrar y soltar y concurrencia optimista), **Propiedades** (búsqueda semántica, alta, fichas pública/neutra y leads interesados), **Agenda** (visitas, bloqueos, link iCal, calendario personal) y **Aprobaciones** (borradores de Claude con edición antes de enviar). Responsive (celular sin scroll horizontal), DOM construido sin `innerHTML` con datos, token en `sessionStorage`. Código en [`panel/`](panel/); endpoints de soporte en `src/modules/panel/` (`/me`, `/dashboard/summary`, `/simulator/*`, `GET /visits`, `GET /properties`, `GET /users`).
+
+| | |
+|---|---|
+| ![Inicio](docs/panel/inicio.png) | ![Simulador](docs/panel/simulador.png) |
+| ![Pipeline](docs/panel/pipeline.png) | ![Propiedades](docs/panel/propiedades.png) |
+
 ## 6. Ejecución
 
 > **¿Primera vez o prueba de bajo costo?** Seguí [PRUEBA.md](PRUEBA.md): Docker local o servidor gratuito, Gemini en plan gratuito, Claude apagado y sin backups a la nube.
@@ -235,6 +244,7 @@ Ver [`.env.example`](.env.example). Se validan al arrancar ([`src/config/env.ts`
 
 ## 7. Estado de la verificación
 
+- Panel probado en Chromium real (Playwright): login (incl. credenciales incorrectas), arrastrar y soltar en el Kanban con persistencia, alta de lead con asignación, mover desde el detalle, ficha neutra en ventana nueva (referencia neutra y sin marca), bloqueo de agenda, link iCal, aprobación con edición, simulador con indicador de escritura y aviso de error del agente, y vista de celular (390 px) sin scroll horizontal.
 - `tsc` sin errores; **48 tests** (incluye generación/lectura iCal con eventos repetitivos): unitarios (motor ICL/IPC, punitorios, liquidación, firmas, normalizadores, router, round-robin, scoring, turnos, ficha neutra, escape HTML) e integración contra **Postgres 16 + pgvector real** (RLS entre tenants; auditoría con actor/IP/UA y snapshots; soft delete y restore; versionado; inmutabilidad para app, sistema y dueño; detección de manipulación de la cadena de hashes; capa privada invisible para agentes IA y asesores; `AI_INTERACTION`; pipeline por defecto, avance solo hacia adelante y reparto 2/1; `PAYMENT_EXEC`; rechazo de visitas superpuestas).
 - Migraciones `0000`→`0005` aplicadas desde cero y también sobre una base con datos (backfill de etapas y de `agent_runs`).
 - Smoke test con API + worker reales: lead manual con asignación round-robin, Kanban (asesora ve solo lo suyo), 409 por versión vieja, fichas pública/neutra en HTML y PDF, link firmado y token adulterado (404), capa privada (403 para asesora + `PRIVATE_ACCESS`), `EXPORT` en el trail, `audit/verify` íntegro y reserva de visita sin Google (segunda reserva del mismo horario → 409, lead pasa a "Visita coordinada").
