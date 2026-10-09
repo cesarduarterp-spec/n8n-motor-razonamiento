@@ -8,7 +8,7 @@
         "height": 460,
         "color": 4
       },
-      "id": "8208df74-0b22-41b8-af43-70536ed11c8c",
+      "id": "e1f43d33-25ab-44fc-baf7-fe5e78afd3ab",
       "name": "Nota 0",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -26,7 +26,7 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "be2c8255-fc07-4261-9b4d-9079a2b33f79",
+      "id": "8df9229e-d3c1-48ad-9653-4916715b55da",
       "name": "Webhook Redireccion",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -58,7 +58,7 @@
           ]
         }
       },
-      "id": "ff3e337e-d73a-4373-94a0-349fdd84ad14",
+      "id": "89c67fa8-514d-4b6e-b39a-5650aced9728",
       "name": "Buscar Enlace",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -78,7 +78,7 @@
       "parameters": {
         "jsCode": "// ===== CONFIGURACIÓN =====\nconst DESTINO_SI_NO_EXISTE = 'https://www.whatsapp.com';  // a dónde mandar si el slug no existe\nconst AGREGAR_REFERENCIA = true;  // agrega \"(ref: slug)\" al mensaje para saber el origen dentro del chat\n\nconst req = $('Webhook Redireccion').first().json;\nconst headers = req.headers || {};\nconst query = req.query || {};\nconst slugPedido = String((req.params || {}).slug || '').toLowerCase();\n\n// Fila del enlace encontrada en la hoja \"Enlaces\" (vacía si no existe)\nconst enlace = $input.all().map(i => i.json).find(r => String(r.slug || '').toLowerCase() === slugPedido);\n\n// ---------- Dispositivo / sistema / navegador / app de origen ----------\nconst ua = String(headers['user-agent'] || '');\nconst prueba = re => re.test(ua);\n\nconst esBot = prueba(/bot|crawl|spider|slurp|facebookexternalhit|facebookcatalog|WhatsApp\\/|TelegramBot|Twitterbot|Slackbot|LinkedInBot|Discordbot|Pinterest|Googlebot|bingbot|preview|HeadlessChrome|curl|wget|python-requests|axios|node-fetch/i) || !ua;\n\nconst dispositivo =\n  prueba(/iPad|Tablet|PlayBook|Silk/i) || (prueba(/Android/i) && !prueba(/Mobile/i)) ? 'Tablet'\n  : prueba(/Mobi|iPhone|iPod|Android|Windows Phone/i) ? 'Móvil'\n  : 'Escritorio';\n\nconst sistema =\n  prueba(/iPhone|iPad|iPod/i) ? 'iOS'\n  : prueba(/Android/i) ? 'Android'\n  : prueba(/Windows/i) ? 'Windows'\n  : prueba(/CrOS/i) ? 'ChromeOS'\n  : prueba(/Mac OS X|Macintosh/i) ? 'macOS'\n  : prueba(/Linux/i) ? 'Linux'\n  : 'Otro';\n\nconst app_origen =\n  prueba(/Instagram/i) ? 'Instagram'\n  : prueba(/FBAN|FBAV|FB_IAB|FBIOS/i) ? 'Facebook'\n  : prueba(/musical_ly|TikTok|BytedanceWebview|trill/i) ? 'TikTok'\n  : prueba(/LinkedInApp/i) ? 'LinkedIn'\n  : prueba(/Twitter/i) ? 'X / Twitter'\n  : prueba(/Snapchat/i) ? 'Snapchat'\n  : prueba(/Pinterest/i) ? 'Pinterest'\n  : prueba(/Telegram/i) ? 'Telegram'\n  : prueba(/GSA\\//i) ? 'Google App'\n  : 'Navegador';\n\nconst navegador =\n  prueba(/Edg\\//i) ? 'Edge'\n  : prueba(/OPR\\/|Opera/i) ? 'Opera'\n  : prueba(/SamsungBrowser/i) ? 'Samsung Internet'\n  : prueba(/Firefox|FxiOS/i) ? 'Firefox'\n  : prueba(/Chrome|CriOS/i) ? 'Chrome'\n  : prueba(/Safari|AppleWebKit/i) ? 'Safari'\n  : 'Otro';\n\n// ---------- IP (para geolocalizar; NO se guarda en la hoja) ----------\nconst ip = String(headers['cf-connecting-ip'] || headers['x-real-ip'] || headers['x-forwarded-for'] || '')\n  .split(',')[0].trim();\n\n// Identificador anónimo de visitante (hash de IP + navegador) para contar clics únicos\nconst hash = s => { let h = 5381; for (const c of s) h = ((h << 5) + h + c.charCodeAt(0)) >>> 0; return h.toString(36); };\nconst visitante_id = hash(ip + '|' + ua);\n\n// ---------- UTM: los de la URL tienen prioridad sobre los guardados ----------\nconst utm = k => String(query[k] || (enlace && enlace[k]) || '').toLowerCase();\n\n// ---------- Destino de WhatsApp ----------\nlet destino = DESTINO_SI_NO_EXISTE;\nif (enlace) {\n  const ref = query.ref || slugPedido;\n  let mensaje = String(enlace.mensaje || '');\n  if (AGREGAR_REFERENCIA) mensaje = `${mensaje} (ref: ${ref})`.trim();\n  const tel = String(enlace.telefono || '').replace(/\\D/g, '');\n  destino = `https://wa.me/${tel}` + (mensaje ? `?text=${encodeURIComponent(mensaje)}` : '');\n}\n\nreturn [{\n  json: {\n    destino,\n    registrar: Boolean(enlace) && !esBot,\n    fecha: $now.toFormat('yyyy-MM-dd HH:mm:ss'),\n    dia: $now.toFormat('yyyy-MM-dd'),\n    hora: $now.toFormat('HH'),\n    slug: slugPedido,\n    utm_source: utm('utm_source'),\n    utm_medium: utm('utm_medium'),\n    utm_campaign: utm('utm_campaign'),\n    utm_content: utm('utm_content'),\n    ref: String(query.ref || ''),\n    dispositivo,\n    sistema,\n    navegador,\n    app_origen,\n    idioma: String(headers['accept-language'] || '').split(',')[0],\n    referer: String(headers['referer'] || headers['referrer'] || ''),\n    visitante_id,\n    ip,\n    pais_cf: String(headers['cf-ipcountry'] || ''),\n  },\n}];\n"
       },
-      "id": "142b10a1-d979-43ff-b1b7-aa6d20ed7ea2",
+      "id": "1844a192-5575-43d4-a5cd-28f67e4699e1",
       "name": "Analizar Visita",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -106,7 +106,7 @@
           }
         }
       },
-      "id": "1a8239cb-8593-438d-92a0-8b07c9cdaece",
+      "id": "c2e5065e-6892-44ee-99aa-647faed3ac8d",
       "name": "Redirigir a WhatsApp",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -125,7 +125,7 @@
           },
           "conditions": [
             {
-              "id": "3236c7d4-d2e0-4479-8e2f-d6fdcd904d32",
+              "id": "3d9e9df4-b7c0-4c32-9bc4-39a465344183",
               "leftValue": "={{ $json.registrar }}",
               "rightValue": "",
               "operator": {
@@ -139,7 +139,7 @@
         },
         "options": {}
       },
-      "id": "4015b6d3-12c4-4996-ac03-ffb14705a73b",
+      "id": "658a8ddf-69ee-42b0-a5a9-1efed215c361",
       "name": "¿Registrar Clic?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -155,7 +155,7 @@
           "timeout": 4000
         }
       },
-      "id": "f2a21d94-cf0b-4e31-85d9-5bd0e0bf864e",
+      "id": "e2b628f7-0c07-4fcc-b112-3d11c40d8ffc",
       "name": "Geolocalizar IP",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -169,7 +169,7 @@
       "parameters": {
         "jsCode": "// Une los datos de la visita con la geolocalización por IP (ipwho.is)\nconst visita = $('Analizar Visita').first().json;\nconst geo = $input.first().json || {};\nconst ok = geo.success === true;\n\nreturn [{\n  json: {\n    fecha: visita.fecha,\n    dia: visita.dia,\n    hora: visita.hora,\n    slug: visita.slug,\n    utm_source: visita.utm_source,\n    utm_medium: visita.utm_medium,\n    utm_campaign: visita.utm_campaign,\n    utm_content: visita.utm_content,\n    ref: visita.ref,\n    dispositivo: visita.dispositivo,\n    sistema: visita.sistema,\n    navegador: visita.navegador,\n    app_origen: visita.app_origen,\n    pais: ok ? geo.country : (visita.pais_cf || 'Desconocido'),\n    region: ok ? geo.region : '',\n    ciudad: ok ? geo.city : '',\n    latitud: ok ? geo.latitude : '',\n    longitud: ok ? geo.longitude : '',\n    proveedor_internet: ok && geo.connection ? geo.connection.isp : '',\n    idioma: visita.idioma,\n    referer: visita.referer,\n    visitante_id: visita.visitante_id,\n  },\n}];\n"
       },
-      "id": "7c11354d-18e9-4b62-80bf-519e7382778b",
+      "id": "32210c9c-7aa2-41a2-be48-6bba4a05891a",
       "name": "Armar Registro de Clic",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -423,7 +423,7 @@
           "cellFormat": "RAW"
         }
       },
-      "id": "f11643bb-cc95-497f-9009-62dfcd7a7b80",
+      "id": "8815f081-8674-4ec6-a547-4c88c904adbf",
       "name": "Guardar Clic",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -445,7 +445,7 @@
         "height": 440,
         "color": 5
       },
-      "id": "a8af0318-38e2-413f-a4ec-7b12e5be75da",
+      "id": "f6e166bd-6ee7-45d8-91b5-5570a8ded246",
       "name": "Nota 9",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -463,7 +463,7 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "0a86bcf3-4713-4a25-b2d6-0cab86a89a8d",
+      "id": "98a032c0-75e0-48fb-b7a7-8317da85264e",
       "name": "Webhook Crear Enlace",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -471,7 +471,7 @@
         0,
         560
       ],
-      "webhookId": "59fbc9af-3bef-4a1c-8e4a-f63850bf9384"
+      "webhookId": "ed749b00-5994-4b17-b10a-8dc0967e9dbd"
     },
     {
       "parameters": {
@@ -487,7 +487,7 @@
         },
         "options": {}
       },
-      "id": "4fc1fbca-4dca-4b94-8e62-e2d5d38d478f",
+      "id": "5dd75ec2-dd80-4775-99bd-39abdca7e302",
       "name": "Leer Enlaces Existentes",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -507,7 +507,7 @@
       "parameters": {
         "jsCode": "// ===== CONFIGURACIÓN =====\nconst CLAVE_ADMIN = 'CAMBIAR_ESTA_CLAVE';      // la misma que pones en el panel\nconst BASE_ENLACES = '';                        // ej: 'https://tu-n8n.com/webhook/wa' (opcional, para devolver el link completo)\n\nconst body = $('Webhook Crear Enlace').first().json.body || {};\nconst existentes = $input.all().map(i => i.json).filter(r => r && r.slug);\n\nconst limpiar = v => String(v ?? '').trim();\nconst slugify = s => limpiar(s).toLowerCase()\n  .normalize('NFD').replace(/[̀-ͯ]/g, '')\n  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);\n\nconst error = (status, mensaje) => [{ json: { ok: false, status, error: mensaje } }];\n\nif (limpiar(body.clave) !== CLAVE_ADMIN) return error(401, 'Clave incorrecta');\n\nconst slug = slugify(body.slug || body.nombre);\nconst telefono = limpiar(body.telefono).replace(/\\D/g, '');\n\nif (!slug) return error(400, 'Falta el nombre del enlace (slug)');\nif (telefono.length < 8 || telefono.length > 15) {\n  return error(400, 'Teléfono inválido: usa formato internacional sin +, ej: 5491122334455');\n}\nif (existentes.some(r => String(r.slug).toLowerCase() === slug)) {\n  return error(409, `El enlace \"${slug}\" ya existe`);\n}\n\nreturn [{\n  json: {\n    ok: true,\n    status: 201,\n    slug,\n    telefono,\n    mensaje: limpiar(body.mensaje),\n    utm_source: slugify(body.utm_source),\n    utm_medium: slugify(body.utm_medium),\n    utm_campaign: slugify(body.utm_campaign),\n    utm_content: slugify(body.utm_content),\n    descripcion: limpiar(body.descripcion),\n    creado: $now.toFormat('yyyy-MM-dd HH:mm:ss'),\n    enlace: BASE_ENLACES ? `${BASE_ENLACES.replace(/\\/+$/, '')}/${slug}` : '',\n  },\n}];\n"
       },
-      "id": "b7870cba-1f08-405b-914c-03d70f3c9331",
+      "id": "4c53cacb-2a8f-4dfa-9ec5-83f75e1a2f24",
       "name": "Validar Enlace",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -526,7 +526,7 @@
           },
           "conditions": [
             {
-              "id": "50817b38-f341-4363-8b84-f42824d9aa57",
+              "id": "b44c0c30-b8ae-43a6-86de-09ce0395f23b",
               "leftValue": "={{ $json.ok }}",
               "rightValue": "",
               "operator": {
@@ -540,7 +540,7 @@
         },
         "options": {}
       },
-      "id": "a42a0e6d-e3dc-4ace-9972-0dca7e5e6ac3",
+      "id": "f1200c3f-afaf-4dbb-9f35-d7cda4568095",
       "name": "¿Datos Válidos?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
@@ -664,7 +664,7 @@
           "cellFormat": "RAW"
         }
       },
-      "id": "42902560-7cef-49dd-9dfb-25d12f70c6b0",
+      "id": "4ad0406e-3f40-42a8-b862-37794f2a61a8",
       "name": "Guardar Enlace",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -687,7 +687,7 @@
           "responseCode": 201
         }
       },
-      "id": "658c5219-6f8e-4743-a77a-20411aecc415",
+      "id": "9cb4cac3-753c-4d2c-8926-05e836d5d4ad",
       "name": "Responder Creado",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -704,7 +704,7 @@
           "responseCode": "={{ $json.status }}"
         }
       },
-      "id": "a3a4122c-601a-44e2-83a6-e5f12a800331",
+      "id": "17ad0afa-afb8-498a-92de-7ae76545993f",
       "name": "Responder Error",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -720,7 +720,7 @@
         "height": 440,
         "color": 6
       },
-      "id": "b71c6101-d681-4113-966f-9810b9bcefec",
+      "id": "4b98ef17-7c0d-448f-af63-95559621c78f",
       "name": "Nota 17",
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
@@ -738,7 +738,7 @@
           "allowedOrigins": "*"
         }
       },
-      "id": "65f4cb7b-89e5-434b-a673-f7552059920c",
+      "id": "17c0e774-84b1-44e6-abed-46b047b2737b",
       "name": "Webhook Estadisticas",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -746,7 +746,7 @@
         0,
         1100
       ],
-      "webhookId": "f861edcb-ae1f-4508-80b8-832aa8eb2bff"
+      "webhookId": "7853040f-5617-4124-8a1f-14336abc469b"
     },
     {
       "parameters": {
@@ -762,7 +762,7 @@
         },
         "options": {}
       },
-      "id": "2e5b9f58-1f29-451c-b9c2-e029b210c61b",
+      "id": "2a3289aa-b917-4357-a5f9-0e4fe4c6fcae",
       "name": "Leer Clics",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -792,7 +792,7 @@
         },
         "options": {}
       },
-      "id": "d3cebb17-501d-450a-bcb1-3eb699f035da",
+      "id": "62ec9444-c05b-4cb3-ad8f-7fb8aa690337",
       "name": "Leer Enlaces",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
@@ -813,7 +813,7 @@
       "parameters": {
         "jsCode": "// ===== CONFIGURACIÓN =====\nconst CLAVE_ADMIN = 'CAMBIAR_ESTA_CLAVE';  // la misma que en \"Validar Enlace\" y en el panel\n\nconst q = $('Webhook Estadisticas').first().json.query || {};\nif (String(q.clave || '') !== CLAVE_ADMIN) return [{ json: { ok: false, error: 'Clave incorrecta' } }];\n\nconst filtroSlug = String(q.slug || '').toLowerCase();\nconst desde = String(q.desde || '');   // yyyy-MM-dd\nconst hasta = String(q.hasta || '');   // yyyy-MM-dd\n\nconst enlaces = $('Leer Enlaces').all().map(i => i.json).filter(r => r && r.slug);\nconst clics = $('Leer Clics').all().map(i => i.json).filter(r => r && r.slug)\n  .filter(r => !filtroSlug || String(r.slug).toLowerCase() === filtroSlug)\n  .filter(r => !desde || String(r.dia) >= desde)\n  .filter(r => !hasta || String(r.dia) <= hasta);\n\nconst contar = campo => {\n  const m = {};\n  for (const c of clics) { const k = String(c[campo] || 'Sin dato'); m[k] = (m[k] || 0) + 1; }\n  return Object.entries(m).sort((a, b) => b[1] - a[1]).map(([nombre, total]) => ({ nombre, total }));\n};\nconst unicos = lista => new Set(lista.map(c => c.visitante_id)).size;\n\nconst porEnlace = enlaces.map(e => {\n  const propios = clics.filter(c => String(c.slug).toLowerCase() === String(e.slug).toLowerCase());\n  return {\n    slug: e.slug,\n    telefono: e.telefono,\n    utm_source: e.utm_source,\n    utm_campaign: e.utm_campaign,\n    descripcion: e.descripcion,\n    creado: e.creado,\n    clics: propios.length,\n    unicos: unicos(propios),\n    ultimo_clic: propios.map(c => c.fecha).sort().pop() || '',\n  };\n}).filter(e => !filtroSlug || String(e.slug).toLowerCase() === filtroSlug)\n  .sort((a, b) => b.clics - a.clics);\n\nreturn [{\n  json: {\n    ok: true,\n    total_clics: clics.length,\n    visitantes_unicos: unicos(clics),\n    enlaces: porEnlace,\n    por_fuente: contar('utm_source'),\n    por_campana: contar('utm_campaign'),\n    por_dispositivo: contar('dispositivo'),\n    por_sistema: contar('sistema'),\n    por_app: contar('app_origen'),\n    por_navegador: contar('navegador'),\n    por_pais: contar('pais'),\n    por_ciudad: contar('ciudad'),\n    por_dia: contar('dia').sort((a, b) => a.nombre.localeCompare(b.nombre)),\n    por_hora: contar('hora').sort((a, b) => a.nombre.localeCompare(b.nombre)),\n    ultimos_clics: clics.slice(-25).reverse(),\n  },\n}];\n"
       },
-      "id": "e2906ce5-bf65-449e-b65d-52a6f49d0651",
+      "id": "d3195d53-cf3f-4e4d-8de5-ff052b917b68",
       "name": "Calcular Estadisticas",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -830,7 +830,7 @@
           "responseCode": 200
         }
       },
-      "id": "4e45fc89-55a6-4b1f-83a3-a992600ea433",
+      "id": "045c41a6-1ca3-4dab-8659-261b2710348c",
       "name": "Responder Estadisticas",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -838,6 +838,322 @@
         880,
         1100
       ]
+    },
+    {
+      "parameters": {
+        "content": "## 4) Recibir clics desde Cloudflare Worker\n`POST /webhook/wa-clics-cf` (cabecera X-Clave)\nEl Worker envía lotes cada minuto. Responde OK solo si Sheets guardó todo; si falla, el Worker conserva los clics y los reintenta (sin pérdidas).",
+        "width": 1560,
+        "height": 400,
+        "color": 3
+      },
+      "id": "6689fdd1-0eb8-42f5-aaca-5fb6e0c54d85",
+      "name": "Nota 23",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -80,
+        1440
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wa-clics-cf",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "3b98fd06-2fa8-45fa-8bed-75dad8001164",
+      "name": "Webhook Clics Cloudflare",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1640
+      ],
+      "webhookId": "8bdf26c2-7c33-4531-86b4-765718c84570"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== CONFIGURACIÓN =====\nconst CLAVE_CLOUDFLARE = 'CAMBIAR_ESTA_CLAVE_CF';  // la misma que el secreto N8N_CLAVE del Worker\n\nconst req = $input.first().json;\nif ((req.headers || {})['x-clave'] !== CLAVE_CLOUDFLARE) {\n  // Al fallar, el Worker conserva los clics y los reintenta\n  throw new Error('Clave de Cloudflare incorrecta');\n}\n\nconst clics = Array.isArray((req.body || {}).clics) ? req.body.clics : [];\nreturn clics.map(c => ({ json: c }));\n"
+      },
+      "id": "ac0f731f-75c3-464c-928a-36b657bc3c7e",
+      "name": "Validar Lote",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        1640
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "REEMPLAZAR_ID_DE_LA_HOJA",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Clics",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "fecha": "={{ $json.fecha }}",
+            "dia": "={{ $json.dia }}",
+            "hora": "={{ $json.hora }}",
+            "slug": "={{ $json.slug }}",
+            "utm_source": "={{ $json.utm_source }}",
+            "utm_medium": "={{ $json.utm_medium }}",
+            "utm_campaign": "={{ $json.utm_campaign }}",
+            "utm_content": "={{ $json.utm_content }}",
+            "ref": "={{ $json.ref }}",
+            "dispositivo": "={{ $json.dispositivo }}",
+            "sistema": "={{ $json.sistema }}",
+            "navegador": "={{ $json.navegador }}",
+            "app_origen": "={{ $json.app_origen }}",
+            "pais": "={{ $json.pais }}",
+            "region": "={{ $json.region }}",
+            "ciudad": "={{ $json.ciudad }}",
+            "latitud": "={{ $json.latitud }}",
+            "longitud": "={{ $json.longitud }}",
+            "proveedor_internet": "={{ $json.proveedor_internet }}",
+            "idioma": "={{ $json.idioma }}",
+            "referer": "={{ $json.referer }}",
+            "visitante_id": "={{ $json.visitante_id }}",
+            "id_clic": "={{ $json.id_clic }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "fecha",
+              "displayName": "fecha",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dia",
+              "displayName": "dia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "hora",
+              "displayName": "hora",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "slug",
+              "displayName": "slug",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_content",
+              "displayName": "utm_content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ref",
+              "displayName": "ref",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "dispositivo",
+              "displayName": "dispositivo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sistema",
+              "displayName": "sistema",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "navegador",
+              "displayName": "navegador",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "app_origen",
+              "displayName": "app_origen",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pais",
+              "displayName": "pais",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "region",
+              "displayName": "region",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ciudad",
+              "displayName": "ciudad",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latitud",
+              "displayName": "latitud",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "longitud",
+              "displayName": "longitud",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "proveedor_internet",
+              "displayName": "proveedor_internet",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "idioma",
+              "displayName": "idioma",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "referer",
+              "displayName": "referer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "visitante_id",
+              "displayName": "visitante_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "id_clic",
+              "displayName": "id_clic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "1bda9506-0d9c-479b-b71a-1f5695308d8f",
+      "name": "Guardar Lote de Clics",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        1640
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "REEMPLAZAR",
+          "name": "Google Sheets account"
+        }
+      }
     }
   ],
   "pinData": {},
@@ -1019,6 +1335,28 @@
         [
           {
             "node": "Responder Estadisticas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Clics Cloudflare": {
+      "main": [
+        [
+          {
+            "node": "Validar Lote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Lote": {
+      "main": [
+        [
+          {
+            "node": "Guardar Lote de Clics",
             "type": "main",
             "index": 0
           }

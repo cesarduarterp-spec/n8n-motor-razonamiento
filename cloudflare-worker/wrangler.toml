@@ -1,0 +1,45 @@
+name = "wa-links"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Reemplaza por tu subdominio (debe estar en Cloudflare). Ej: wa.tumarca.com
+routes = [
+  { pattern = "wa.tumarca.com", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "LINKS"
+id = "REEMPLAZAR_ID_KV"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wa-clics"
+database_id = "REEMPLAZAR_ID_D1"
+migrations_dir = "migrations"
+
+# Reenvía a n8n los clics pendientes cada minuto (por lotes)
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# Webhook de n8n "Recibir Clics (Cloudflare)". Vacío = solo se guardan en D1
+N8N_CLICS_URL = ""
+# Si un enlace no existe o falla la base, se manda a este WhatsApp (formato internacional sin +)
+TELEFONO_RESPALDO = ""
+MENSAJE_RESPALDO = "Hola! Quiero más información"
+# Si no hay TELEFONO_RESPALDO, se usa esta URL
+DESTINO_POR_DEFECTO = "https://www.whatsapp.com"
+# A dónde lleva la raíz del dominio (wa.tumarca.com/). Vacío = WhatsApp de respaldo
+SITIO_WEB = ""
+AGREGAR_REFERENCIA = "true"
+ZONA_HORARIA = "America/Argentina/Buenos_Aires"
+
+# Secretos (NO van aquí): npx wrangler secret put ADMIN_KEY  /  npx wrangler secret put N8N_CLAVE
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+[observability]
+enabled = true

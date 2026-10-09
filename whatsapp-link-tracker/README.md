@@ -10,12 +10,16 @@ Crea enlaces cortos con nombre propio hacia tu WhatsApp Business, con parámetro
 
 Además, el mensaje que se precarga en el chat incluye `(ref: nombre-del-enlace)`, así **al recibir la consulta en WhatsApp ya sabes de qué campaña viene**.
 
+> **¿Vas a usarlo con anuncios, QR impresos o mucho tráfico?** Usa la versión con dominio propio y respaldo
+> anti-caídas en [`../cloudflare-worker`](../cloudflare-worker/README.md). Este workflow sigue sirviendo como copia en
+> Google Sheets (flujo 4) y como plan B.
+
 ## Archivos
 
 | Archivo | Qué es |
 |---|---|
-| `whatsapp_link_tracker.json` | Workflow de n8n (importar) con 3 flujos: redirección, crear enlace y estadísticas |
-| `panel.html` | Panel web para crear enlaces (con QR) y ver estadísticas. Se abre en el navegador o se sube a cualquier hosting |
+| `whatsapp_link_tracker.json` | Workflow de n8n (importar) con 4 flujos: redirección, crear enlace, estadísticas y recepción de clics desde Cloudflare |
+| `panel.html` | Panel web para crear enlaces (con QR) y ver estadísticas. Funciona con n8n o con el Worker de Cloudflare (que lo sirve en `/admin`) |
 
 ## Cómo funciona
 
@@ -47,7 +51,7 @@ slug	telefono	mensaje	utm_source	utm_medium	utm_campaign	utm_content	descripcion
 
 **Pestaña `Clics`**
 ```
-fecha	dia	hora	slug	utm_source	utm_medium	utm_campaign	utm_content	ref	dispositivo	sistema	navegador	app_origen	pais	region	ciudad	latitud	longitud	proveedor_internet	idioma	referer	visitante_id
+fecha	dia	hora	slug	utm_source	utm_medium	utm_campaign	utm_content	ref	dispositivo	sistema	navegador	app_origen	pais	region	ciudad	latitud	longitud	proveedor_internet	idioma	referer	visitante_id	id_clic
 ```
 
 > Formatea la columna `telefono` como **Texto sin formato** para que Sheets no convierta el número.
@@ -55,7 +59,7 @@ fecha	dia	hora	slug	utm_source	utm_medium	utm_campaign	utm_content	ref	dispositi
 ### 2. n8n
 
 1. *Workflows → Import from file* → `whatsapp_link_tracker.json`.
-2. En los 6 nodos de Google Sheets: elige tu credencial y reemplaza `REEMPLAZAR_ID_DE_LA_HOJA` por el ID de tu hoja
+2. En los 7 nodos de Google Sheets: elige tu credencial y reemplaza `REEMPLAZAR_ID_DE_LA_HOJA` por el ID de tu hoja
    (lo que va entre `/d/` y `/edit` en la URL).
 3. Cambia `CAMBIAR_ESTA_CLAVE` en los nodos **Validar Enlace** y **Calcular Estadisticas** (la misma clave en ambos).
 4. Opcional, en **Analizar Visita**:
@@ -67,7 +71,7 @@ fecha	dia	hora	slug	utm_source	utm_medium	utm_campaign	utm_content	ref	dispositi
 
 ### 3. Panel
 
-Abre `panel.html`, despliega “Configuración de conexión”, pon la URL de tu n8n y la clave, y guarda.
+Abre `panel.html`, despliega “Configuración de conexión”, elige **n8n** como backend, pon la URL de tu n8n y la clave, y guarda.
 Desde ahí creas enlaces (te da el link y su QR) y ves las estadísticas con filtros por enlace y fechas.
 
 ## Uso de marketing recomendado

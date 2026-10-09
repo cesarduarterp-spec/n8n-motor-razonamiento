@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Enlaces de WhatsApp</title>
+<!--WA_CONFIG-->
 <style>
   :root {
     --bg: #f6f7f5; --card: #ffffff; --text: #1b1f1d; --muted: #66706b; --line: #e3e6e3;
@@ -60,13 +61,15 @@
   <p class="sub">Crea enlaces con nombre propio y UTM, y mide clics, dispositivo y ubicación de cada consulta.</p>
 
   <details class="card" id="cfg">
-    <summary>Configuración de conexión con n8n</summary>
+    <summary>Configuración de conexión</summary>
     <div class="grid" style="margin-top:14px">
-      <div><label>URL de tu n8n</label><input id="n8n" placeholder="https://tu-n8n.com"></div>
-      <div><label>Base de los enlaces cortos</label><input id="base" placeholder="https://tu-n8n.com/webhook/wa"></div>
+      <div><label>Backend</label><select id="backend"><option value="cloudflare">Cloudflare Worker</option><option value="n8n">n8n</option></select></div>
+      <div><label>URL del backend</label><input id="n8n" placeholder="https://wa.tumarca.com"></div>
+      <div><label>Base de los enlaces cortos</label><input id="base" placeholder="https://wa.tumarca.com"></div>
       <div><label>Clave de administrador</label><input id="clave" type="password" placeholder="CAMBIAR_ESTA_CLAVE"></div>
     </div>
-    <div class="row"><button class="sec" id="guardarCfg">Guardar configuración</button></div>
+    <div class="row"><button class="sec" id="guardarCfg">Guardar configuración</button><button class="sec" id="respaldo">Descargar respaldo de enlaces</button></div>
+    <div class="msg" id="msgCfg"></div>
   </details>
 
   <section class="card">
@@ -137,35 +140,47 @@ const store = {
   set(k, v) { try { localStorage.setItem('walinks_' + k, v); } catch {} },
 };
 
-['n8n', 'base', 'clave'].forEach(k => { $(k).value = store.get(k); });
-if (!store.get('n8n')) $('cfg').open = true;
+const CAMPOS_CFG = ['backend', 'n8n', 'base', 'clave'];
+const predeterminado = window.WA_CONFIG || {};
+CAMPOS_CFG.forEach(k => { $(k).value = store.get(k) || { n8n: predeterminado.url, base: predeterminado.base, backend: predeterminado.backend }[k] || $(k).value; });
+if (!$('n8n').value || !$('clave').value) $('cfg').open = true;
 
 $('guardarCfg').onclick = () => {
   const n8n = $('n8n').value.trim().replace(/\/+$/, '');
   $('n8n').value = n8n;
-  if (!$('base').value.trim() && n8n) $('base').value = n8n + '/webhook/wa';
-  ['n8n', 'base', 'clave'].forEach(k => store.set(k, $(k).value.trim()));
+  if (!$('base').value.trim() && n8n) $('base').value = $('backend').value === 'n8n' ? n8n + '/webhook/wa' : n8n;
+  CAMPOS_CFG.forEach(k => store.set(k, $(k).value.trim()));
   cargarStats();
 };
 
-const cfg = () => ({
-  n8n: $('n8n').value.trim().replace(/\/+$/, ''),
-  base: ($('base').value.trim() || $('n8n').value.trim().replace(/\/+$/, '') + '/webhook/wa').replace(/\/+$/, ''),
-  clave: $('clave').value.trim(),
-});
+const cfg = () => {
+  const n8n = $('n8n').value.trim().replace(/\/+$/, '');
+  const esN8n = $('backend').value === 'n8n';
+  return {
+    n8n, esN8n,
+    base: ($('base').value.trim() || (esN8n ? n8n + '/webhook/wa' : n8n)).replace(/\/+$/, ''),
+    clave: $('clave').value.trim(),
+  };
+};
+// Rutas de cada backend: n8n usa la clave en el body/query, Cloudflare en la cabecera Authorization
+const rutas = {
+  crear: c => c.n8n + (c.esN8n ? '/webhook/wa-crear' : '/api/links'),
+  stats: c => c.n8n + (c.esN8n ? '/webhook/wa-stats' : '/api/stats'),
+};
+const cabeceras = c => c.esN8n ? {} : { Authorization: 'Bearer ' + c.clave };
 
 function setMsg(el, texto, error) { el.textContent = texto; el.className = 'msg' + (error ? ' err' : ''); }
 
 $('crear').onclick = async () => {
   const c = cfg();
-  if (!c.n8n) return setMsg($('msgCrear'), 'Primero configura la URL de tu n8n.', true);
+  if (!c.n8n) return setMsg($('msgCrear'), 'Primero configura la URL del backend.', true);
   const datos = { clave: c.clave };
   ['slug', 'telefono', 'mensaje', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'descripcion']
     .forEach(k => { datos[k] = $(k).value.trim(); });
   setMsg($('msgCrear'), 'Creando…');
   try {
-    const r = await fetch(c.n8n + '/webhook/wa-crear', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos),
+    const r = await fetch(rutas.crear(c), {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...cabeceras(c) }, body: JSON.stringify(datos),
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || !j.ok) throw new Error(j.error || ('Error ' + r.status));
@@ -202,10 +217,11 @@ function tabla(id, columnas, filas) {
 async function cargarStats() {
   const c = cfg();
   if (!c.n8n) return;
-  const p = new URLSearchParams({ clave: c.clave, slug: $('filtroSlug').value, desde: $('desde').value, hasta: $('hasta').value });
+  const p = new URLSearchParams({ slug: $('filtroSlug').value, desde: $('desde').value, hasta: $('hasta').value });
+  if (c.esN8n) p.set('clave', c.clave);
   setMsg($('msgStats'), 'Cargando…');
   try {
-    const r = await fetch(c.n8n + '/webhook/wa-stats?' + p);
+    const r = await fetch(rutas.stats(c) + '?' + p, { headers: cabeceras(c) });
     const s = await r.json();
     if (!s.ok) throw new Error(s.error || 'Respuesta inválida');
     setMsg($('msgStats'), '');
@@ -239,6 +255,23 @@ async function cargarStats() {
     setMsg($('msgStats'), 'No se pudieron cargar las estadísticas: ' + e.message, true);
   }
 }
+
+$('respaldo').onclick = async () => {
+  const c = cfg();
+  if (c.esN8n) return setMsg($('msgCfg'), 'Con n8n el respaldo es tu Google Sheets (pestaña Enlaces).');
+  try {
+    const r = await fetch(c.n8n + '/api/links?completo=1', { headers: cabeceras(c) });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.error || 'Error ' + r.status);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ enlaces: j.enlaces }, null, 2)], { type: 'application/json' }));
+    a.download = 'respaldo-enlaces-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    setMsg($('msgCfg'), j.enlaces.length + ' enlaces descargados. Se restauran con POST /api/links/importar.');
+  } catch (e) {
+    setMsg($('msgCfg'), 'No se pudo descargar: ' + e.message, true);
+  }
+};
 
 $('actualizar').onclick = cargarStats;
 cargarStats();
