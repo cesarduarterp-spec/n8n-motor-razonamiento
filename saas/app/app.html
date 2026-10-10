@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Panel de enlaces</title>
+<!--CONFIG-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f5; --card: #ffffff; --text: #1b1f1d; --muted: #66706b; --line: #e3e6e3;
+    --accent: #128c4a; --accent-soft: #e3f4ea; --bar: #25d366; --danger: #b42318; --warn: #b54708;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1311; --card: #171c19; --text: #e8ece9; --muted: #98a29d; --line: #2a312d;
+      --accent: #3ddc84; --accent-soft: #1b2e23; --bar: #2fbf6b; --danger: #ff8a7a; --warn: #f5b971;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1311; --card: #171c19; --text: #e8ece9; --muted: #98a29d; --line: #2a312d;
+    --accent: #3ddc84; --accent-soft: #1b2e23; --bar: #2fbf6b; --danger: #ff8a7a; --warn: #f5b971;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 16px; margin: 0 0 14px; }
+  h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+  input:disabled { opacity: .6; }
+  textarea { min-height: 64px; resize: vertical; }
+  .check { display: flex; gap: 8px; align-items: center; color: var(--text); font-size: 14px; }
+  .check input { width: auto; }
+  button, .btn { display: inline-block; background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer; text-decoration: none; }
+  button.sec, .btn.sec { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.mini { padding: 4px 9px; font-size: 13px; font-weight: 500; }
+  button.peligro { color: var(--danger); border-color: var(--danger); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .msg { margin-top: 12px; font-size: 14px; }
+  .msg.err { color: var(--danger); }
+  header.top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .plan { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: space-between; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+  .badge.gris { background: var(--line); color: var(--muted); }
+  .badge.rojo { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  .login { max-width: 420px; margin: 10vh auto; }
+  .login .card { padding: 24px; }
+  .sep { text-align: center; color: var(--muted); font-size: 13px; margin: 14px 0; }
+  .tablewrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td.acc { display: flex; gap: 6px; }
+  .qr { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding: 14px; background: var(--accent-soft); border-radius: 10px; }
+  .qr img { width: 140px; height: 140px; background: #fff; border-radius: 6px; }
+  .qr code { word-break: break-all; }
+  .kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .kpi b { display: block; font-size: 26px; }
+  .kpi span { color: var(--muted); font-size: 13px; }
+  .bars div { display: grid; grid-template-columns: minmax(80px, 38%) 1fr 40px; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 6px; }
+  .bars i { display: block; height: 8px; border-radius: 4px; background: var(--bar); }
+  .bars em { font-style: normal; text-align: right; color: var(--muted); }
+  .bars .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vacio { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ================= Inicio de sesión ================= -->
+<section id="vistaLogin" class="login" hidden>
+  <div class="card">
+    <h1 id="nombreLogin">Enlaces</h1>
+    <p class="muted">Crea enlaces a tu WhatsApp con nombre propio y descubre qué campaña trae cada consulta.</p>
+    <form id="formLogin">
+      <label for="email">Tu email</label>
+      <input id="email" type="email" required placeholder="tu@negocio.com" autocomplete="email">
+      <div class="row" style="margin-top:12px"><button>Recibir enlace de acceso</button></div>
+    </form>
+    <div class="sep">o</div>
+    <button class="sec" id="google" style="width:100%">Continuar con Google</button>
+    <div class="msg" id="msgLogin"></div>
+    <p class="muted" style="font-size:13px;margin-top:18px" id="legal">Al continuar aceptas los términos de uso y la política de privacidad.</p>
+  </div>
+</section>
+
+<!-- ================= Panel ================= -->
+<main id="vistaApp" hidden>
+  <header class="top">
+    <h1 id="nombreApp">Enlaces</h1>
+    <div class="row"><span class="muted" id="emailUsuario"></span><button class="sec mini" id="salir">Salir</button></div>
+  </header>
+
+  <section class="card plan">
+    <div>
+      <span class="badge" id="planBadge">Plan</span>
+      <span class="muted" id="planUso"></span>
+    </div>
+    <div class="row" id="mejorar"></div>
+  </section>
+  <div class="card msg err" id="avisoSuspendida" hidden>Tu cuenta está suspendida por no cumplir los términos de uso. Escríbenos para revisarlo.</div>
+
+  <section class="card">
+    <h2 id="tituloForm">Nuevo enlace</h2>
+    <div class="grid">
+      <div><label for="slug">Nombre del enlace</label><input id="slug" placeholder="promo-octubre-ig" maxlength="60"></div>
+      <div><label for="telefono">WhatsApp (con código de país, sin +)</label><input id="telefono" placeholder="5491122334455" inputmode="tel"></div>
+      <div><label for="utm_source">Fuente</label>
+        <input id="utm_source" list="fuentes" placeholder="instagram">
+        <datalist id="fuentes"><option>instagram</option><option>facebook</option><option>tiktok</option><option>linkedin</option><option>google</option><option>youtube</option><option>email</option><option>qr</option><option>web</option></datalist>
+      </div>
+      <div><label for="utm_medium">Medio</label>
+        <input id="utm_medium" list="medios" placeholder="bio">
+        <datalist id="medios"><option>bio</option><option>historia</option><option>post</option><option>reel</option><option>anuncio</option><option>organico</option><option>flyer</option></datalist>
+      </div>
+      <div><label for="utm_campaign">Campaña</label><input id="utm_campaign" placeholder="black-friday"></div>
+      <div><label for="utm_content">Contenido</label><input id="utm_content" placeholder="video-testimonio"></div>
+    </div>
+    <div class="grid" style="margin-top:12px">
+      <div><label for="mensaje">Mensaje que se precarga en el chat</label><textarea id="mensaje" maxlength="1000" placeholder="¡Hola! Vi su publicación y quiero más información"></textarea></div>
+      <div><label for="descripcion">Nota interna (opcional)</label><textarea id="descripcion" maxlength="300" placeholder="Link de la bio de Instagram"></textarea></div>
+    </div>
+    <label class="check" style="margin-top:12px"><input type="checkbox" id="agregar_ref"> Agregar el código del enlace al mensaje, para saber en el chat de qué campaña viene</label>
+    <div class="row" style="margin-top:14px">
+      <button id="guardar">Crear enlace</button>
+      <button class="sec" id="cancelar" hidden>Cancelar edición</button>
+    </div>
+    <div class="msg" id="msgForm"></div>
+    <div class="qr" id="qrBox" hidden>
+      <img id="qrImg" alt="Código QR del enlace">
+      <div style="flex:1;min-width:200px">
+        <div class="muted" style="font-size:13px">Tu enlace</div>
+        <code id="qrUrl"></code>
+        <div class="row" style="margin-top:8px">
+          <button class="sec mini" id="qrCopiar">Copiar</button>
+          <a class="btn sec" id="qrDescargar" style="padding:4px 9px;font-size:13px" target="_blank" rel="noopener">Descargar QR</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Mis enlaces</h2>
+    <div class="tablewrap"><table id="tablaEnlaces"></table></div>
+    <p class="muted" style="font-size:13px;margin:10px 0 0">Los cambios de número o mensaje se aplican en hasta 1 minuto.</p>
+  </section>
+
+  <section>
+    <div class="row" style="margin:0 0 12px">
+      <h2 style="margin:0;flex:1">Estadísticas</h2>
+      <select id="filtroSlug" style="width:auto" aria-label="Enlace"><option value="">Todos los enlaces</option></select>
+      <input id="desde" type="date" style="width:auto" aria-label="Desde">
+      <input id="hasta" type="date" style="width:auto" aria-label="Hasta">
+      <button id="actualizar">Actualizar</button>
+    </div>
+    <div class="msg" id="msgStats"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="grid">
+      <div class="card"><h3>Fuente</h3><div class="bars" id="por_fuente"></div></div>
+      <div class="card"><h3>App de origen</h3><div class="bars" id="por_app"></div></div>
+      <div class="card"><h3>Dispositivo</h3><div class="bars" id="por_dispositivo"></div></div>
+      <div class="card"><h3>Campaña</h3><div class="bars" id="por_campana"></div></div>
+      <div class="card"><h3>País</h3><div class="bars" id="por_pais"></div></div>
+      <div class="card"><h3>Ciudad</h3><div class="bars" id="por_ciudad"></div></div>
+      <div class="card"><h3>Sistema</h3><div class="bars" id="por_sistema"></div></div>
+      <div class="card"><h3>Clics por día</h3><div class="bars" id="por_dia"></div></div>
+    </div>
+    <div class="card"><h3>Últimos clics</h3><div class="tablewrap"><table id="tablaClics"></table></div></div>
+  </section>
+</main>
+
+<script>
+const C = window.APP || {};
+const $ = id => document.getElementById(id);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const slugify = s => String(s ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+const BASE = location.origin;
+const CAMPOS = ['slug', 'telefono', 'mensaje', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'descripcion'];
+
+document.title = `${C.nombre || 'Enlaces'} · Panel`;
+$('nombreLogin').textContent = C.nombre || 'Enlaces';
+$('nombreApp').textContent = C.nombre || 'Enlaces';
+if (C.terminos || C.privacidad) {
+  $('legal').innerHTML = 'Al continuar aceptas los ' +
+    (C.terminos ? `<a href="${esc(C.terminos)}" target="_blank" rel="noopener">términos de uso</a>` : 'términos de uso') + ' y la ' +
+    (C.privacidad ? `<a href="${esc(C.privacidad)}" target="_blank" rel="noopener">política de privacidad</a>` : 'política de privacidad') + '.';
+}
+
+const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseKey);
+let usuario = null, cuenta = null, enlaces = [], editando = null;
+
+function setMsg(el, texto, error) { el.textContent = texto; el.className = 'msg' + (error ? ' err' : ''); }
+function errorAmigable(e) {
+  if (!e) return '';
+  if (e.code === '23505') return 'Ese nombre ya está en uso. Elige otro.';
+  if (e.code === '23514') return 'Revisa los datos: el nombre solo admite letras, números y guiones, y el teléfono de 8 a 15 dígitos.';
+  return e.message || 'Ocurrió un error. Intenta de nuevo.';
+}
+
+// ---------- Sesión ----------
+async function iniciar() {
+  const { data } = await sb.auth.getSession();
+  mostrar(data.session);
+  sb.auth.onAuthStateChange((_evento, sesion) => mostrar(sesion));
+}
+function mostrar(sesion) {
+  const antes = usuario && usuario.id;
+  usuario = sesion ? sesion.user : null;
+  $('vistaLogin').hidden = Boolean(usuario);
+  $('vistaApp').hidden = !usuario;
+  if (usuario && usuario.id !== antes) {
+    $('emailUsuario').textContent = usuario.email || '';
+    cargarTodo();
+  }
+}
+$('formLogin').onsubmit = async e => {
+  e.preventDefault();
+  setMsg($('msgLogin'), 'Enviando…');
+  const { error } = await sb.auth.signInWithOtp({ email: $('email').value.trim(), options: { emailRedirectTo: BASE + '/app' } });
+  setMsg($('msgLogin'), error ? errorAmigable(error) : 'Listo: revisa tu email y abre el enlace de acceso.', Boolean(error));
+};
+$('google').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: BASE + '/app' } });
+$('salir').onclick = () => sb.auth.signOut();
+
+async function cargarTodo() { await Promise.all([cargarCuenta(), cargarEnlaces()]); await cargarStats(); }
+
+// ---------- Plan ----------
+async function cargarCuenta() {
+  const { data, error } = await sb.rpc('mi_cuenta');
+  if (error || !data) return;
+  cuenta = data;
+  $('planBadge').textContent = 'Plan ' + data.plan_nombre;
+  $('planBadge').className = 'badge' + (data.plan === 'gratis' ? ' gris' : '');
+  const historial = data.dias_historial ? `${data.dias_historial} días de historial` : 'historial completo';
+  const vence = data.plan !== 'gratis' && data.plan_vence ? ` · se renueva el ${new Date(data.plan_vence).toLocaleDateString('es')}` : '';
+  $('planUso').textContent = ` ${data.enlaces_usados} de ${data.max_enlaces} enlaces · ${historial}${vence}`;
+  $('avisoSuspendida').hidden = !data.suspendida;
+
+  const pagar = (url, plan) => url
+    ? `<a class="btn${plan === 'Agencia' ? ' sec' : ''}" target="_blank" rel="noopener" href="${esc(url)}?client_reference_id=${encodeURIComponent(usuario.id)}&prefilled_email=${encodeURIComponent(usuario.email || '')}">Pasar a ${plan}</a>`
+    : '';
+  $('mejorar').innerHTML =
+    (data.plan === 'gratis' ? pagar(C.pagoPro, 'Pro') : '') +
+    (data.plan !== 'agencia' ? pagar(C.pagoAgencia, 'Agencia') : '');
+}
+
+// ---------- Enlaces ----------
+async function cargarEnlaces() {
+  const { data, error } = await sb.from('enlaces').select('*').order('creado', { ascending: false });
+  if (error) return setMsg($('msgForm'), errorAmigable(error), true);
+  enlaces = data || [];
+  const sel = $('filtroSlug'), actual = sel.value;
+  sel.innerHTML = '<option value="">Todos los enlaces</option>' +
+    enlaces.map(e => `<option value="${esc(e.slug)}">${esc(e.slug)}</option>`).join('');
+  sel.value = enlaces.some(e => e.slug === actual) ? actual : '';
+  pintarEnlaces({});
+}
+
+function pintarEnlaces(porSlug) {
+  const filas = enlaces.map(e => {
+    const st = porSlug[e.slug] || {};
+    const estado = e.bloqueado ? '<span class="badge rojo">Bloqueado</span>'
+      : e.activo ? '<span class="badge">Activo</span>' : '<span class="badge gris">Pausado</span>';
+    return `<tr>
+      <td><a href="${esc(BASE + '/' + e.slug)}" target="_blank" rel="noopener">/${esc(e.slug)}</a></td>
+      <td>+${esc(e.telefono)}</td><td>${esc(e.utm_source || '—')}</td><td>${esc(e.utm_campaign || '—')}</td>
+      <td>${st.clics ?? 0}</td><td>${st.unicos ?? 0}</td><td>${estado}</td>
+      <td class="acc">
+        <button class="sec mini" data-acc="qr" data-id="${esc(e.id)}">QR</button>
+        <button class="sec mini" data-acc="editar" data-id="${esc(e.id)}">Editar</button>
+        <button class="sec mini" data-acc="pausar" data-id="${esc(e.id)}">${e.activo ? 'Pausar' : 'Activar'}</button>
+        <button class="sec mini peligro" data-acc="borrar" data-id="${esc(e.id)}">Borrar</button>
+      </td></tr>`;
+  }).join('');
+  $('tablaEnlaces').innerHTML = '<thead><tr><th>Enlace</th><th>WhatsApp</th><th>Fuente</th><th>Campaña</th><th>Clics</th><th>Únicos</th><th>Estado</th><th></th></tr></thead><tbody>' +
+    (filas || '<tr><td colspan="8" class="vacio">Todavía no tienes enlaces. Crea el primero arriba.</td></tr>') + '</tbody>';
+}
+
+$('tablaEnlaces').onclick = async ev => {
+  const b = ev.target.closest('button[data-acc]');
+  if (!b) return;
+  const e = enlaces.find(x => x.id === b.dataset.id);
+  if (!e) return;
+  if (b.dataset.acc === 'qr') return mostrarQR(e.slug);
+  if (b.dataset.acc === 'editar') return empezarEdicion(e);
+  if (b.dataset.acc === 'pausar') {
+    const { error } = await sb.from('enlaces').update({ activo: !e.activo }).eq('id', e.id);
+    if (error) return setMsg($('msgForm'), errorAmigable(error), true);
+    return cargarEnlaces().then(cargarStats);
+  }
+  if (b.dataset.acc === 'borrar') {
+    if (!confirm(`¿Borrar /${e.slug}? Se pierden sus estadísticas y el enlace deja de funcionar.`)) return;
+    const { error } = await sb.from('enlaces').delete().eq('id', e.id);
+    if (error) return setMsg($('msgForm'), errorAmigable(error), true);
+    if (editando && editando.id === e.id) terminarEdicion();
+    await Promise.all([cargarCuenta(), cargarEnlaces()]);
+    cargarStats();
+  }
+};
+
+function empezarEdicion(e) {
+  editando = e;
+  CAMPOS.forEach(k => { $(k).value = e[k] || ''; });
+  $('agregar_ref').checked = Boolean(e.agregar_ref);
+  $('slug').disabled = true;
+  $('tituloForm').textContent = `Editar /${e.slug}`;
+  $('guardar').textContent = 'Guardar cambios';
+  $('cancelar').hidden = false;
+  setMsg($('msgForm'), 'El nombre no se puede cambiar: así los enlaces y QR ya publicados siguen funcionando.');
+  $('tituloForm').scrollIntoView({ behavior: 'smooth' });
+}
+function terminarEdicion() {
+  editando = null;
+  CAMPOS.forEach(k => { $(k).value = ''; });
+  $('agregar_ref').checked = false;
+  $('slug').disabled = false;
+  $('tituloForm').textContent = 'Nuevo enlace';
+  $('guardar').textContent = 'Crear enlace';
+  $('cancelar').hidden = true;
+}
+$('cancelar').onclick = () => { terminarEdicion(); setMsg($('msgForm'), ''); };
+
+$('guardar').onclick = async () => {
+  const d = {
+    telefono: $('telefono').value.replace(/\D/g, ''),
+    mensaje: $('mensaje').value.trim(),
+    utm_source: slugify($('utm_source').value),
+    utm_medium: slugify($('utm_medium').value),
+    utm_campaign: slugify($('utm_campaign').value),
+    utm_content: slugify($('utm_content').value),
+    descripcion: $('descripcion').value.trim(),
+    agregar_ref: $('agregar_ref').checked,
+  };
+  if (d.telefono.length < 8 || d.telefono.length > 15) {
+    return setMsg($('msgForm'), 'Escribe el WhatsApp con código de país, sin + ni espacios. Ej: 5491122334455', true);
+  }
+  setMsg($('msgForm'), 'Guardando…');
+  let res;
+  if (editando) {
+    res = await sb.from('enlaces').update(d).eq('id', editando.id).select().single();
+  } else {
+    d.slug = slugify($('slug').value);
+    if (!d.slug) return setMsg($('msgForm'), 'Escribe un nombre para el enlace.', true);
+    res = await sb.from('enlaces').insert(d).select().single();
+  }
+  if (res.error) return setMsg($('msgForm'), errorAmigable(res.error), true);
+  const slug = res.data.slug;
+  setMsg($('msgForm'), editando ? 'Cambios guardados.' : 'Enlace creado.');
+  terminarEdicion();
+  mostrarQR(slug);
+  await Promise.all([cargarCuenta(), cargarEnlaces()]);
+  cargarStats();
+};
+
+function mostrarQR(slug) {
+  const url = BASE + '/' + slug;
+  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=12&data=' + encodeURIComponent(url);
+  $('qrUrl').textContent = url;
+  $('qrImg').src = qr;
+  $('qrDescargar').href = qr + '&download=1';
+  $('qrBox').hidden = false;
+}
+$('qrCopiar').onclick = async () => {
+  try { await navigator.clipboard.writeText($('qrUrl').textContent); $('qrCopiar').textContent = 'Copiado ✓'; }
+  catch { $('qrCopiar').textContent = 'Copia manualmente'; }
+  setTimeout(() => { $('qrCopiar').textContent = 'Copiar'; }, 1800);
+};
+
+// ---------- Estadísticas ----------
+function barras(id, lista) {
+  const max = Math.max(1, ...(lista || []).map(x => x.total));
+  $(id).innerHTML = (lista || []).slice(0, 10).map(x =>
+    `<div><span class="name" title="${esc(x.nombre)}">${esc(x.nombre)}</span><i style="width:${(x.total / max * 100).toFixed(1)}%"></i><em>${x.total}</em></div>`
+  ).join('') || '<span class="vacio">Sin datos todavía</span>';
+}
+
+async function cargarStats() {
+  setMsg($('msgStats'), 'Cargando…');
+  const { data: s, error } = await sb.rpc('estadisticas', {
+    p_slug: $('filtroSlug').value || null, p_desde: $('desde').value || null, p_hasta: $('hasta').value || null,
+  });
+  if (error || !s) return setMsg($('msgStats'), 'No se pudieron cargar las estadísticas: ' + errorAmigable(error), true);
+  const limitado = cuenta && cuenta.dias_historial ? ` Tu plan muestra los últimos ${cuenta.dias_historial} días.` : '';
+  setMsg($('msgStats'), limitado.trim());
+
+  const top = (s.por_fuente || [])[0];
+  $('kpis').innerHTML = [
+    ['Clics', s.total_clics], ['Visitantes únicos', s.visitantes_unicos],
+    ['Fuente principal', top ? top.nombre : '—'], ['Enlaces', enlaces.length],
+  ].map(([t, v]) => `<div class="kpi"><b>${esc(v)}</b><span>${esc(t)}</span></div>`).join('');
+
+  ['por_fuente', 'por_app', 'por_dispositivo', 'por_campana', 'por_pais', 'por_ciudad', 'por_sistema', 'por_dia']
+    .forEach(k => barras(k, s[k]));
+
+  const filas = (s.ultimos_clics || []).map(c => `<tr>${['fecha', 'slug', 'utm_source', 'app_origen', 'dispositivo', 'ciudad', 'pais']
+    .map(k => `<td>${esc(c[k] || '—')}</td>`).join('')}</tr>`).join('');
+  $('tablaClics').innerHTML = '<thead><tr><th>Fecha (UTC)</th><th>Enlace</th><th>Fuente</th><th>App</th><th>Dispositivo</th><th>Ciudad</th><th>País</th></tr></thead><tbody>' +
+    (filas || '<tr><td colspan="7" class="vacio">Sin clics todavía</td></tr>') + '</tbody>';
+
+  if (!$('filtroSlug').value) pintarEnlaces(Object.fromEntries((s.enlaces || []).map(e => [e.slug, e])));
+}
+$('actualizar').onclick = cargarStats;
+
+iniciar();
+</script>
+</body>
+</html>

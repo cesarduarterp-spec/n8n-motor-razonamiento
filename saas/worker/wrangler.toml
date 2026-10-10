@@ -1,0 +1,53 @@
+name = "enlaces-saas"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Tu dominio de producto (debe estar en Cloudflare). Ej: tumarca.link
+routes = [
+  { pattern = "tumarca.link", custom_domain = true }
+]
+
+# Copia de los enlaces: respuesta rápida y respaldo si Supabase no responde
+[[kv_namespaces]]
+binding = "CACHE"
+id = "REEMPLAZAR_ID_KV"
+
+# Clics pendientes de enviar a Supabase
+[[d1_databases]]
+binding = "PENDIENTES"
+database_name = "enlaces-pendientes"
+database_id = "REEMPLAZAR_ID_D1"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+NOMBRE_PRODUCTO = "TuMarca"
+SUPABASE_URL = "https://REEMPLAZAR.supabase.co"
+# Clave pública (anon / publishable): la usa el panel en el navegador
+SUPABASE_ANON_KEY = "REEMPLAZAR"
+# Zona horaria para agrupar los clics por día
+ZONA_HORARIA = "America/Argentina/Buenos_Aires"
+# A dónde lleva la raíz del dominio (vacío = /app). Ej: tu página de ventas
+SITIO_WEB = ""
+# Páginas legales (recomendado antes de cobrar)
+URL_TERMINOS = ""
+URL_PRIVACIDAD = ""
+# Stripe: links de pago (Payment Links) e IDs de precio de cada plan
+STRIPE_LINK_PRO = ""
+STRIPE_LINK_AGENCIA = ""
+STRIPE_PRECIO_PRO = ""
+STRIPE_PRECIO_AGENCIA = ""
+
+# Secretos (NO van aquí):
+#   npx wrangler secret put SUPABASE_SERVICE_KEY
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+[observability]
+enabled = true

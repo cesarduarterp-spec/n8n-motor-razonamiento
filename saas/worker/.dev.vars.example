@@ -1,0 +1,5 @@
+# Copia este archivo como .dev.vars para probar en tu computadora (no se sube a GitHub)
+SUPABASE_URL=https://REEMPLAZAR.supabase.co
+SUPABASE_SERVICE_KEY=REEMPLAZAR
+SUPABASE_ANON_KEY=REEMPLAZAR
+STRIPE_WEBHOOK_SECRET=REEMPLAZAR
